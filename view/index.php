@@ -225,11 +225,11 @@ $dsDbConf = array(
 	),
 	'generate-rental-order' => array(
 		'table'  => 'commande',
-		'head'   => array('Projet LLD', 'Nb Produits', 'Tiers', 'Date', 'Reste à livrer', 'Montant HT'),
-		'select' => "SELECT c.rowid, c.ref, IFNULL(pj.ref,'-') AS projet, (SELECT COUNT(*) FROM " . MAIN_DB_PREFIX . "commandedet WHERE fk_commande=c.rowid) AS nb_prod, s.nom AS tiers, DATE_FORMAT(c.date_commande,'%d/%m/%Y') AS date_c, (SELECT SUM(cd.qty) - COALESCE((SELECT SUM(ed.qty) FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet = cd.rowid AND e.fk_statut > 0), 0) FROM " . MAIN_DB_PREFIX . "commandedet cd WHERE cd.fk_commande = c.rowid) AS reste_livrer, CONCAT(ROUND(c.total_ht,2),' €') AS ht FROM " . MAIN_DB_PREFIX . "commande c LEFT JOIN " . MAIN_DB_PREFIX . "societe s ON s.rowid=c.fk_soc LEFT JOIN " . MAIN_DB_PREFIX . "projet pj ON pj.rowid=c.fk_projet WHERE c.source=1 ORDER BY c.rowid DESC LIMIT {NB}",
-		'url'    => '/commande/card.php?ref=',
+		'head'   => array('Projet LLD', 'Type de projet', 'Nb Produits', 'Tiers', 'Date', 'Reste à livrer', 'Montant HT'),
+		'select' => "SELECT c.rowid, c.ref, IFNULL(pj.ref,'-') AS projet, IFNULL(CONCAT(CASE pje.rental_ltrproject WHEN 1 THEN 'Loc. Classique' WHEN 2 THEN 'Loc. Longue Durée' ELSE 'Non' END, ' (', CASE pje.rental_ltr_sales_billing WHEN 1 THEN 'Mensuelle' WHEN 2 THEN 'Depuis onglet' WHEN 3 THEN 'Manuel' ELSE '-' END, ')'), '-') AS type_projet, (SELECT COUNT(*) FROM " . MAIN_DB_PREFIX . "commandedet WHERE fk_commande=c.rowid) AS nb_prod, s.nom AS tiers, DATE_FORMAT(c.date_commande,'%d/%m/%Y') AS date_c, (SELECT SUM(cd.qty) - COALESCE((SELECT SUM(ed.qty) FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet = cd.rowid AND e.fk_statut > 0), 0) FROM " . MAIN_DB_PREFIX . "commandedet cd WHERE cd.fk_commande = c.rowid) AS reste_livrer, CONCAT(ROUND(c.total_ht,2),' €') AS ht FROM " . MAIN_DB_PREFIX . "commande c LEFT JOIN " . MAIN_DB_PREFIX . "societe s ON s.rowid=c.fk_soc LEFT JOIN " . MAIN_DB_PREFIX . "projet pj ON pj.rowid=c.fk_projet LEFT JOIN " . MAIN_DB_PREFIX . "projet_extrafields pje ON pje.fk_object = pj.rowid WHERE c.source=1 ORDER BY c.rowid DESC LIMIT {NB}",
+		'url'    => '/commande/card.php?id=',
 	),
-	'generate-rental-shipping' => array(
+	'generate-rental-expedition' => array(
 		'table'  => 'expedition',
 		'head'   => array('Commande', 'Projet LLD', 'Tiers', 'Qté Expédiée'),
 		'select' => "SELECT e.rowid, e.ref, IFNULL(c.ref,'-') AS commande, IFNULL(pj.ref,'-') AS projet, s.nom AS tiers, (SELECT SUM(qty) FROM " . MAIN_DB_PREFIX . "expeditiondet WHERE fk_expedition=e.rowid) AS qte FROM " . MAIN_DB_PREFIX . "expedition e LEFT JOIN " . MAIN_DB_PREFIX . "element_element ee ON ee.fk_target=e.rowid AND ee.targettype='shipping' AND ee.sourcetype='commande' LEFT JOIN " . MAIN_DB_PREFIX . "commande c ON c.rowid=ee.fk_source LEFT JOIN " . MAIN_DB_PREFIX . "societe s ON s.rowid=e.fk_soc LEFT JOIN " . MAIN_DB_PREFIX . "projet pj ON pj.rowid=c.fk_projet ORDER BY e.rowid DESC LIMIT {NB}",
@@ -241,6 +241,29 @@ $preExecMaxRowid = 0;
 // ACTIONS — logique inline, pas de subprocess
 // ═══════════════════════════════════════════════════════════════════════════════
 // ══ Handler AJAX : streaming de logs ligne à ligne ══════════════════════════════════
+if ($action === 'fetch_order_lines') {
+    header('Content-Type: application/json; charset=utf-8');
+    $fk_commande = GETPOST('fk_commande', 'int');
+    if (!$fk_commande) { echo json_encode(array('error' => 'No order ID')); exit; }
+    global $db;
+    require_once DOL_DOCUMENT_ROOT . '/commande/class/commande.class.php';
+    $cmd = new Commande($db);
+    if ($cmd->fetch($fk_commande) <= 0) { echo json_encode(array('error' => 'Order not found')); exit; }
+    
+    $res = array('start_date' => date('Y-m-d', $cmd->date_commande), 'lines' => array());
+    foreach ($cmd->lines as $line) {
+        if ($line->product_type == 0) { // Only products
+            $shipped = 0;
+            $sql = "SELECT SUM(ed.qty) as qty FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet = " . $line->id . " AND e.fk_statut > 0";
+            $res_ship = $db->query($sql);
+            if ($res_ship && $obj = $db->fetch_object($res_ship)) { $shipped = (int)$obj->qty; }
+            $rem = max(0, $line->qty - $shipped);
+            $res['lines'][] = array('id' => $line->id, 'ref' => $line->ref, 'qty' => $line->qty, 'qty_shipped' => $shipped, 'qty_rem' => $rem);
+        }
+    }
+    echo json_encode($res);
+    exit;
+}
 if ($action === 'poll_log') {
 	if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 	$_pollScript = GETPOST('script', 'alphanohtml');
@@ -1235,7 +1258,7 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 		dsLog('─── ' . $ok . ' OK, ' . $ko . ' erreur(s) ───');
 
 	// ════════════════════════════════════════════════════════════════════════
-	} elseif ($script === 'generate-rental-shipping') {
+	} elseif ($script === 'generate-rental-expedition') {
 	// ════════════════════════════════════════════════════════════════════════
 		if (!isModEnabled('expedition')) {
 			dsLog('❌ Module Expéditions requis.', 'error');
@@ -1885,6 +1908,105 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 		dsLog('─── ' . $ok . ' OK, ' . $ko . ' erreur(s) ───');
 
 	// ════════════════════════════════════════════════════════════════════════
+	
+	} elseif ($script === 'generate-rental-return') {
+	// =========================================================================================
+		if (!isModEnabled('productreturn')) {
+			dsLog('⚠️ Module ProductReturn requis.', 'error');
+			goto render;
+		}
+		require_once DOL_DOCUMENT_ROOT . '/commande/class/commande.class.php';
+		require_once DOL_DOCUMENT_ROOT . '/custom/productreturn/class/productreturn.class.php';
+
+		$fk_commande = GETPOST('fk_commande', 'int');
+		$nb = GETPOST('nb', 'int') ?: 1;
+
+		if ($fk_commande <= 0) {
+			dsLog('⚠️ Commande de location requise.', 'error');
+			goto render;
+		}
+
+		$cmd = new Commande($db);
+		if ($cmd->fetch($fk_commande) <= 0) {
+			dsLog('⚠️ Impossible de charger la commande.', 'error');
+			goto render;
+		}
+
+		// Find shipped lines
+		$shippedLines = array();
+		foreach ($cmd->lines as $line) {
+			if ($line->product_type == 0) {
+				$shipped = 0;
+				$sql = "SELECT SUM(ed.qty) as qty FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet = " . $line->id . " AND e.fk_statut > 0";
+				$res_ship = $db->query($sql);
+				if ($res_ship && $obj = $db->fetch_object($res_ship)) { $shipped = (int)$obj->qty; }
+				
+				// Find returned qty
+				$returned = 0;
+				$sql2 = "SELECT SUM(pd.qty_returned) as qty FROM " . MAIN_DB_PREFIX . "productreturndet pd JOIN " . MAIN_DB_PREFIX . "productreturn p ON p.rowid=pd.fk_productreturn WHERE pd.origin_line_id = " . $line->id . " AND p.statut > 0";
+				$res_ret = $db->query($sql2);
+				if ($res_ret && $obj = $db->fetch_object($res_ret)) { $returned = (int)$obj->qty; }
+				
+				$rem_returnable = max(0, $shipped - $returned);
+				if ($rem_returnable > 0) {
+					$shippedLines[] = array(
+						'id' => $line->id,
+						'fk_product' => $line->fk_product,
+						'max_qty' => $rem_returnable,
+						'entrepot_id' => 1 // Default warehouse
+					);
+				}
+			}
+		}
+
+		if (empty($shippedLines)) {
+			dsLog('⚠️ Aucun produit expédié disponible pour un retour sur cette commande.', 'error');
+			goto render;
+		}
+
+		$ok = 0; $ko = 0;
+		for ($i = 0; $i < $nb; $i++) {
+			$pr = new Productreturn($db);
+			$pr->socid = $cmd->socid;
+			$pr->origin = 'commande';
+			$pr->origin_id = $cmd->id;
+			$pr->fk_projet = $cmd->fk_project;
+			$pr->date_return = $cmd->date_commande + (86400 * rand(30, 300));
+			$pr->statut = 0;
+			$pr->brouillon = 1;
+
+			$res = $pr->create($user);
+			if ($res > 0) {
+				$total_ret = 0;
+				foreach ($shippedLines as &$sline) {
+					if ($sline['max_qty'] <= 0) continue;
+					if (rand(0, 100) > 30) {
+						$qty_to_return = rand(1, $sline['max_qty']);
+						$pr->addline($sline['entrepot_id'], $sline['id'], $sline['fk_product'], $qty_to_return, $qty_to_return, $qty_to_return, array(), '', false);
+						$sline['max_qty'] -= $qty_to_return;
+						$total_ret += $qty_to_return;
+					}
+				}
+				
+				if ($total_ret > 0) {
+					$pr->valid($user);
+					dsLog('✅ Retour loc #'.$res.' généré (' . $total_ret . ' produits)', 'success');
+					$ok++;
+					$logLines[] = '| ' . $pr->ref . ' | ' . $cmd->ref . ' | ' . ($cmd->fk_project ? 'PRJ-'.$cmd->fk_project : '-') . ' | ' . getSocName($cmd->socid) . ' | ' . $total_ret;
+				} else {
+					dsLog('❌ Retour #'.$res.' ignoré car vide', 'warn');
+				}
+			} else {
+				dsLog('❌ Erreur création retour: ' . $pr->error, 'error');
+				$ko++;
+			}
+			
+			$canReturn = false;
+			foreach ($shippedLines as $sline) { if ($sline['max_qty'] > 0) $canReturn = true; }
+			if (!$canReturn) break;
+		}
+		dsLog('🏁 ' . $ok . ' OK, ' . $ko . ' erreur(s) 🏁');
+
 	} elseif ($script === 'purge-data') {
 	// ════════════════════════════════════════════════════════════════════════
 		if (!$user->admin && !$user->hasRight('dolistream', 'purge', 'run')) {
@@ -2409,7 +2531,7 @@ $scriptDefs = array(
 		'hint'    => 'Génère des commandes de location associées à un projet LLD sélectionné.',
 		'danger'  => false,
 		'perm'    => 'generate',
-		'columns' => array('Réf Commande', 'Projet LLD', 'Nb Produits', 'Tiers', 'Date', 'Montant HT'),
+		'columns' => array('Réf Commande', 'Projet LLD', 'Type de projet', 'Nb Produits', 'Tiers', 'Date', 'Montant HT'),
 		'fields'  => array(
 			array('name' => 'nb', 'label' => 'Nombre à générer', 'type' => 'number', 'default' => 1, 'min' => 1, 'max' => 50),
 			array(
@@ -2432,19 +2554,29 @@ $scriptDefs = array(
 			array('name' => 'qty_val', 'label' => 'Quantité (ou max)', 'type' => 'number', 'default' => 1, 'min' => 1, 'max' => 1000)
 		),
 	),
-	'generate-rental-shipping' => array(
+	'generate-rental-expedition' => array(
 		'label'   => 'Expédition Loc',
 		'icon'    => 'sending',
-		'hint'    => 'Génère l\'expédition pour les commandes d\'un projet LLD sélectionné.',
+		'hint'    => 'Génère des expéditions réparties sur 1 an pour une commande LLD sélectionnée.',
 		'danger'  => false,
 		'perm'    => 'generate',
-		'columns' => array('Réf Exp.', 'Commande', 'Projet LLD', 'Tiers', 'Qté Expédiée'),
+		'columns' => array('Réf Exp.', 'Commande', 'Mois', 'Qté Expédiée', 'Lot/Série'),
 		'fields'  => array(
-			array(
-				'name'    => 'fk_project',
-				'label'   => 'Projet de location',
-				'type'    => 'select_rental_project',
-			)
+			array('name' => 'fk_commande', 'label' => 'Commande de location', 'type' => 'select_rental_order'),
+			array('name' => 'grid', 'label' => '', 'type' => 'custom_expedition_grid')
+		),
+	),
+
+	'generate-rental-return' => array(
+		'label'   => 'Retour Loc',
+		'icon'    => 'truck',
+		'hint'    => 'Génère des retours pour les commandes LLD sélectionnées (utilise le module productreturn).',
+		'danger'  => false,
+		'perm'    => 'generate',
+		'columns' => array('Réf Retour', 'Commande', 'Projet LLD', 'Tiers', 'Nb Produits Retournés'),
+		'fields'  => array(
+			array('name' => 'fk_commande', 'label' => 'Commande de location', 'type' => 'select_rental_order'),
+			array('name' => 'nb', 'label' => 'Retours aléatoires à générer', 'type' => 'number', 'default' => 1, 'min' => 1, 'max' => 20)
 		),
 	),
 	'purge-data' => array(
@@ -3008,6 +3140,109 @@ print dol_get_fiche_head($head, $activeTab, 'DoliStream', -1, 'technic');
               }
             });
           </script>
+        <?php elseif ($field['type'] === 'select_rental_order'): ?>
+          <select name="<?php print $field['name']; ?>" id="ds-fld-<?php print $field['name']; ?>" class="flat" required style="min-width:300px; max-width:500px;">
+            <option value="">-- Sélectionnez une commande LLD --</option>
+          <?php
+            global $db;
+            $res = $db->query("SELECT c.rowid, c.ref, s.nom FROM " . MAIN_DB_PREFIX . "commande c LEFT JOIN " . MAIN_DB_PREFIX . "societe s ON s.rowid=c.fk_soc WHERE c.fk_statut >= 1 AND c.source = 1 ORDER BY c.rowid DESC LIMIT 100");
+            while ($res && $obj = $db->fetch_object($res)) {
+              print '<option value="'.$obj->rowid.'">'.htmlspecialchars($obj->ref . ' - ' . $obj->nom).'</option>';
+            }
+          ?>
+          </select>
+          <script>
+            document.addEventListener('DOMContentLoaded', function() {
+              if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
+                jQuery('#ds-fld-<?php print $field['name']; ?>').select2({ width: '300px' });
+                jQuery('#ds-fld-<?php print $field['name']; ?>').on('change', function() {
+                    if (typeof loadExpeditionGrid === 'function') loadExpeditionGrid(this.value);
+                });
+              } else {
+                document.getElementById('ds-fld-<?php print $field['name']; ?>').addEventListener('change', function() {
+                    if (typeof loadExpeditionGrid === 'function') loadExpeditionGrid(this.value);
+                });
+              }
+            });
+          </script>
+        <?php elseif ($field['type'] === 'custom_expedition_grid'): ?>
+          </label></div><div style="width:100%; margin-bottom: 20px;">
+          <div id="expedition_grid_container" style="margin-top: 15px; width: 100%; overflow-x: auto; background: #fff; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+             <p class="opacitymedium"><em>Sélectionnez une commande pour afficher la grille de répartition.</em></p>
+          </div>
+          <script>
+                        function loadExpeditionGrid(commande_id) {
+                if (!commande_id) {
+                    document.getElementById('expedition_grid_container').innerHTML = '<p class="opacitymedium"><em>Sélectionnez une commande pour afficher la grille de répartition.</em></p>';
+                    return;
+                }
+                document.getElementById('expedition_grid_container').innerHTML = 'Chargement des produits...';
+                
+                fetch('?action=fetch_order_lines&fk_commande=' + commande_id)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) { document.getElementById('expedition_grid_container').innerHTML = '<span style="color:red">'+data.error+'</span>'; return; }
+                    
+                                                            let html = '<table class="liste" style="width:100%; margin-top:10px;"><tr class="liste_titre">';
+                    html += '<th>Produit</th><th>Qté Cmd</th><th>Déjà Exp</th><th>Reste</th>';
+                    let mDate = new Date(data.start_date);
+                    let months = [];
+                    for(let i=0; i<12; i++) {
+                        let y = mDate.getFullYear();
+                        let m = mDate.getMonth() + 1;
+                        let sDate = y + '-' + (m < 10 ? '0'+m : m) + '-01';
+                        let sLabel = (m < 10 ? '0'+m : m) + '/' + y;
+                        months.push(sDate);
+                        html += '<th style="text-align:center; font-size:0.9em;">' + sLabel + '</th>';
+                        mDate.setMonth(mDate.getMonth() + 1);
+                    }
+                    html += '</tr>';
+                    
+                    data.lines.forEach(line => {
+                        html += '<tr class="oddeven">';
+                        html += '<td>'+line.ref+'</td><td>'+line.qty+'</td><td>'+line.qty_shipped+'</td>';
+                        html += '<td><strong id="rem_'+line.id+'" data-tot="'+line.qty_rem+'">'+line.qty_rem+'</strong></td>';
+                        months.forEach(m => {
+                            html += '<td align="center"><input type="number" min="0" class="flat grid-input" data-line="'+line.id+'" name="grid['+line.id+']['+m+']" value="0" style="width:40px; text-align:center;" onchange="updateGridTot(this, '+line.id+')"></td>';
+                        });
+                        html += '</tr>';
+                    });
+                    
+                    html += '</table>';
+                    html += '<div style="margin-top:10px;"><button type="button" class="button" onclick="randomizeGrid()">Répartir Aléatoirement</button></div>';
+                    document.getElementById('expedition_grid_container').innerHTML = html;
+                }).catch(e => { document.getElementById('expedition_grid_container').innerHTML = 'Erreur: ' + e; });
+            }
+            
+            function updateGridTot(input, lineId) {
+                let inputs = document.querySelectorAll('input.grid-input[data-line="'+lineId+'"]');
+                let sum = 0; inputs.forEach(i => sum += parseInt(i.value || 0));
+                let remEl = document.getElementById('rem_'+lineId);
+                let tot = parseInt(remEl.getAttribute('data-tot'));
+                let diff = tot - sum;
+                remEl.innerHTML = diff;
+                if (diff < 0) remEl.style.color = 'red'; else if (diff > 0) remEl.style.color = 'orange'; else remEl.style.color = 'green';
+            }
+            
+            function randomizeGrid() {
+                let inputs = document.querySelectorAll('input.grid-input');
+                inputs.forEach(i => i.value = 0);
+                let lines = {};
+                inputs.forEach(i => { let id = i.getAttribute('data-line'); if (!lines[id]) lines[id] = []; lines[id].push(i); });
+                for(let id in lines) {
+                    let remEl = document.getElementById('rem_'+id);
+                    let tot = parseInt(remEl.getAttribute('data-tot'));
+                    let arr = lines[id];
+                    while(tot > 0) {
+                        let idx = Math.floor(Math.random() * arr.length);
+                        let val = parseInt(arr[idx].value || 0);
+                        arr[idx].value = val + 1; tot--;
+                    }
+                    updateGridTot(arr[0], id);
+                }
+            }
+          </script>
+          </div><div style="display:none"><label>
         <?php elseif ($field['type'] === 'multiselect_rental_product'): ?>
           <select name="<?php print $field['name']; ?>[]" id="ds-fld-<?php print $field['name']; ?>" class="flat" multiple="multiple" required style="min-width:300px; max-width:500px;">
           <?php

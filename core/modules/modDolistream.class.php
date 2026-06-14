@@ -331,7 +331,7 @@ class modDolistream extends DolibarrModules
 			'url'      => '',
 			'langs'    => 'dolistream@dolistream',
 			'position' => 1000 + $r,
-			'enabled'  => "isModEnabled('dolistream')",
+			'enabled'  => 'isModEnabled("dolistream") && getDolGlobalString("DOLISTREAM_ENABLE_RENTAL")',
 			'perms'    => '$user->hasRight("dolistream", "generate", "run")',
 			'target'   => '',
 			'user'     => 0,
@@ -347,7 +347,7 @@ class modDolistream extends DolibarrModules
 			'url'      => '',
 			'langs'    => 'dolistream@dolistream',
 			'position' => 1000 + $r,
-			'enabled'  => "isModEnabled('dolistream')",
+			'enabled'  => 'isModEnabled("dolistream") && getDolGlobalString("DOLISTREAM_ENABLE_RENTAL")',
 			'perms'    => '$user->hasRight("dolistream", "generate", "run")',
 			'target'   => '',
 			'user'     => 0,
@@ -360,7 +360,7 @@ class modDolistream extends DolibarrModules
 			'generate-rental-proposal' => '- Proposition loc',
 			'generate-rental-order'    => '- Commande loc',
 			'generate-rental-expedition' => '- Expédition loc',
-			'generate-rental-delivery' => '- Livraison loc',
+			'generate-rental-return'   => '- Retour loc',
 			'generate-rental-workflow' => '- Flux location'
 		);
 
@@ -374,7 +374,7 @@ class modDolistream extends DolibarrModules
 				'url'      => '/dolistream/view/index.php?script=' . $scriptKey,
 				'langs'    => 'dolistream@dolistream',
 				'position' => 1000 + $r,
-				'enabled'  => "isModEnabled('dolistream')",
+				'enabled'  => 'isModEnabled("dolistream") && getDolGlobalString("DOLISTREAM_ENABLE_RENTAL")',
 				'perms'    => '$user->hasRight("dolistream", "generate", "run")',
 				'target'   => '',
 				'user'     => 0,

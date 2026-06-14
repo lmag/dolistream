@@ -51,15 +51,46 @@ $langs->loadLangs(array('admin', 'dolistream@dolistream'));
 // ── Hooks ────────────────────────────────────────────────────────────────────
 $hookmanager->initHooks(array('dolistreamsetup', 'globalsetup'));
 
-// ── Actions ──────────────────────────────────────────────────────────────────
-$action     = GETPOST('action', 'aZ09');
-$backtopage = GETPOST('backtopage', 'alpha');
+	$action     = GETPOST('action', 'aZ09');
+	$backtopage = GETPOST('backtopage', 'alpha');
 
-include DOL_DOCUMENT_ROOT . '/core/actions_setmoduleoptions.inc.php';
+	include DOL_DOCUMENT_ROOT . '/core/actions_setmoduleoptions.inc.php';
 
-/*
- * View
- */
+	$log_filename = !empty($conf->global->DOLISTREAM_LOG_FILE) ? $conf->global->DOLISTREAM_LOG_FILE : 'dolistream.log';
+	$log_filepath = DOL_DATA_ROOT . '/' . $log_filename;
+
+	if ($action === 'set_log_file') {
+		$new_log = GETPOST('log_file', 'alpha');
+		if (!empty($new_log)) {
+			dolibarr_set_const($db, 'DOLISTREAM_LOG_FILE', $new_log, 'chaine', 0, '', $conf->entity);
+			$log_filename = $new_log;
+			$log_filepath = DOL_DATA_ROOT . '/' . $log_filename;
+			setEventMessages($langs->trans("RecordSaved"), null, 'mesgs');
+		}
+	} elseif ($action === 'empty_log') {
+		if (file_exists($log_filepath)) {
+			file_put_contents($log_filepath, '');
+			setEventMessages("Fichier de log vidé.", null, 'mesgs');
+		}
+	} elseif ($action === 'download_log') {
+		if (file_exists($log_filepath)) {
+			header('Content-Description: File Transfer');
+			header('Content-Type: text/plain');
+			header('Content-Disposition: attachment; filename="' . basename($log_filepath) . '"');
+			header('Expires: 0');
+			header('Cache-Control: must-revalidate');
+			header('Pragma: public');
+			header('Content-Length: ' . filesize($log_filepath));
+			readfile($log_filepath);
+			exit;
+		} else {
+			setEventMessages("Le fichier de log n'existe pas.", null, 'errors');
+		}
+	}
+
+	/*
+	 * View
+	 */
 
 $title = $langs->trans('DoliStreamSetup');
 llxHeader('', $title, '', '', 0, 0, '', '', '', 'mod-dolistream page-admin');
@@ -86,6 +117,35 @@ print '<tr class="oddeven"><td>' . $langs->trans('Access') . '</td><td>' . $lang
 print '<tr class="oddeven"><td>' . $langs->trans('MainPage') . '</td>';
 print '<td><a class="butAction" href="' . DOL_URL_ROOT . '/custom/dolistream/view/index.php" style="padding:4px 10px;">';
 print '▶ ' . $langs->trans('DoliStream') . '</a></td></tr>';
+print '</table><br><br>';
+
+// Section Log
+print load_fiche_titre("Log de la console", '', '');
+print '<table class="noborder centpercent">';
+print '<tr class="liste_titre"><td colspan="2">Fichier de log système</td></tr>';
+
+print '<tr class="oddeven"><td>Nom du fichier (dans ' . DOL_DATA_ROOT . '/)</td><td>';
+print '<form method="POST" action="' . $_SERVER['PHP_SELF'] . '">';
+print '<input type="hidden" name="token" value="' . newToken() . '">';
+print '<input type="hidden" name="action" value="set_log_file">';
+print '<input type="text" name="log_file" value="' . htmlspecialchars($log_filename) . '" class="flat minwidth200" style="margin-right:8px;">';
+print '<input type="submit" class="button" value="' . $langs->trans('Modify') . '">';
+print '</form>';
+print '</td></tr>';
+
+$size = file_exists($log_filepath) ? filesize($log_filepath) : 0;
+$size_text = $size > 1048576 ? round($size / 1048576, 2) . ' Mo' : ($size > 1024 ? round($size / 1024, 2) . ' Ko' : $size . ' octets');
+
+print '<tr class="oddeven"><td>Taille du fichier</td><td><strong>' . $size_text . '</strong></td></tr>';
+
+print '<tr class="oddeven"><td>Actions</td><td>';
+if (file_exists($log_filepath)) {
+	print '<a class="butAction" href="' . $_SERVER['PHP_SELF'] . '?action=download_log&token=' . newToken() . '">Télécharger le log</a>';
+	print '<a class="butActionDelete" href="' . $_SERVER['PHP_SELF'] . '?action=empty_log&token=' . newToken() . '" onclick="return confirm(\'Voulez-vous vraiment vider le fichier de log ?\');">Vider le log</a>';
+} else {
+	print '<span class="opacitymedium">Le fichier n\'existe pas encore.</span>';
+}
+print '</td></tr>';
 print '</table>';
 
 print dol_get_fiche_end();
