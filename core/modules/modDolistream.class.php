@@ -359,8 +359,6 @@ class modDolistream extends DolibarrModules
 			'generate-rental-project'  => '- Projet loc',
 			'generate-rental-proposal' => '- Proposition loc',
 			'generate-rental-order'    => '- Commande loc',
-			'generate-rental-expedition' => '- Expédition loc',
-			'generate-rental-return'   => '- Retour loc',
 			'generate-rental-workflow' => '- Flux location'
 		);
 

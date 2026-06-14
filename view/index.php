@@ -229,7 +229,7 @@ $dsDbConf = array(
 		'select' => "SELECT c.rowid, c.ref, IFNULL(pj.ref,'-') AS projet, IFNULL(CONCAT(CASE pje.rental_ltrproject WHEN 1 THEN 'Loc. Classique' WHEN 2 THEN 'Loc. Longue Durée' ELSE 'Non' END, ' (', CASE pje.rental_ltr_sales_billing WHEN 1 THEN 'Mensuelle' WHEN 2 THEN 'Depuis onglet' WHEN 3 THEN 'Manuel' ELSE '-' END, ')'), '-') AS type_projet, (SELECT COUNT(*) FROM " . MAIN_DB_PREFIX . "commandedet WHERE fk_commande=c.rowid) AS nb_prod, s.nom AS tiers, DATE_FORMAT(c.date_commande,'%d/%m/%Y') AS date_c, (SELECT SUM(cd.qty) - COALESCE((SELECT SUM(ed.qty) FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet = cd.rowid AND e.fk_statut > 0), 0) FROM " . MAIN_DB_PREFIX . "commandedet cd WHERE cd.fk_commande = c.rowid) AS reste_livrer, CONCAT(ROUND(c.total_ht,2),' €') AS ht FROM " . MAIN_DB_PREFIX . "commande c LEFT JOIN " . MAIN_DB_PREFIX . "societe s ON s.rowid=c.fk_soc LEFT JOIN " . MAIN_DB_PREFIX . "projet pj ON pj.rowid=c.fk_projet LEFT JOIN " . MAIN_DB_PREFIX . "projet_extrafields pje ON pje.fk_object = pj.rowid WHERE c.source=1 ORDER BY c.rowid DESC LIMIT {NB}",
 		'url'    => '/commande/card.php?id=',
 	),
-	'generate-rental-expedition' => array(
+	'generate-rental-workflow' => array(
 		'table'  => 'expedition',
 		'head'   => array('Commande', 'Projet LLD', 'Tiers', 'Qté Expédiée'),
 		'select' => "SELECT e.rowid, e.ref, IFNULL(c.ref,'-') AS commande, IFNULL(pj.ref,'-') AS projet, s.nom AS tiers, (SELECT SUM(qty) FROM " . MAIN_DB_PREFIX . "expeditiondet WHERE fk_expedition=e.rowid) AS qte FROM " . MAIN_DB_PREFIX . "expedition e LEFT JOIN " . MAIN_DB_PREFIX . "element_element ee ON ee.fk_target=e.rowid AND ee.targettype='shipping' AND ee.sourcetype='commande' LEFT JOIN " . MAIN_DB_PREFIX . "commande c ON c.rowid=ee.fk_source LEFT JOIN " . MAIN_DB_PREFIX . "societe s ON s.rowid=e.fk_soc LEFT JOIN " . MAIN_DB_PREFIX . "projet pj ON pj.rowid=c.fk_projet ORDER BY e.rowid DESC LIMIT {NB}",
@@ -256,9 +256,46 @@ if ($action === 'fetch_order_lines') {
             $shipped = 0;
             $sql = "SELECT SUM(ed.qty) as qty FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet = " . $line->id . " AND e.fk_statut > 0";
             $res_ship = $db->query($sql);
-            if ($res_ship && $obj = $db->fetch_object($res_ship)) { $shipped = (int)$obj->qty; }
+    $resWh = $db->query("SELECT rowid, ref, lieu as label FROM " . MAIN_DB_PREFIX . "entrepot WHERE fk_project=" . $fk_project);
             $rem = max(0, $line->qty - $shipped);
             $res['lines'][] = array('id' => $line->id, 'ref' => $line->ref, 'qty' => $line->qty, 'qty_shipped' => $shipped, 'qty_rem' => $rem);
+        }
+    }
+    echo json_encode($res);
+    $sqlCmd = "SELECT rowid FROM " . MAIN_DB_PREFIX . "commande WHERE fk_projet=" . $fk_project . " AND fk_statut IN (1,2,3)";
+}
+if ($action === 'fetch_project_flow_data') {
+    $fk_project = (int)$_GET['fk_project'];
+    require_once DOL_DOCUMENT_ROOT . '/projet/class/project.class.php';
+    require_once DOL_DOCUMENT_ROOT . '/commande/class/commande.class.php';
+    $proj = new Project($db);
+    if ($proj->fetch($fk_project) <= 0) { echo json_encode(array('error' => 'Project not found')); exit; }
+    $res = array();
+    $res['start_date'] = date('Y-m-d', $proj->date_start ?: $proj->date_c);
+    
+    // Fetch warehouses
+    $resWh = $db->query("SELECT rowid, ref, lieu as label FROM " . MAIN_DB_PREFIX . "entrepot WHERE fk_project=" . $fk_project);
+    while ($resWh && $objWh = $db->fetch_object($resWh)) {
+        $res['warehouses'][] = array('id' => $objWh->rowid, 'ref' => $objWh->ref, 'label' => $objWh->label);
+    }
+    
+    $res['classic_warehouses'] = array();
+    $resCWh = $db->query("SELECT rowid, ref, lieu as label FROM " . MAIN_DB_PREFIX . "entrepot WHERE statut=1 AND (fk_project IS NULL OR fk_project = 0) ORDER BY ref");
+    while ($resCWh && $objCWh = $db->fetch_object($resCWh)) {
+        $res['classic_warehouses'][] = array('id' => $objCWh->rowid, 'ref' => $objCWh->ref, 'label' => $objCWh->label);
+    }
+    
+    // Fetch order lines (only physical products)
+    $sqlCmd = "SELECT rowid FROM " . MAIN_DB_PREFIX . "commande WHERE fk_projet=" . $fk_project . " AND fk_statut IN (1,2,3)";
+    $resCmd = $db->query($sqlCmd);
+    while ($resCmd && $objCmd = $db->fetch_object($resCmd)) {
+        $cmd = new Commande($db);
+        if ($cmd->fetch($objCmd->rowid) > 0) {
+            foreach ($cmd->lines as $line) {
+                if ($line->product_type == 0) { // Only products
+                    $res['lines'][] = array('id' => $line->id, 'ref' => $line->ref, 'qty' => $line->qty, 'cmd_id' => $cmd->id, 'cmd_ref' => $cmd->ref);
+                }
+            }
         }
     }
     echo json_encode($res);
@@ -1258,117 +1295,171 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 		dsLog('─── ' . $ok . ' OK, ' . $ko . ' erreur(s) ───');
 
 	// ════════════════════════════════════════════════════════════════════════
-	} elseif ($script === 'generate-rental-expedition') {
+	} elseif ($script === 'generate-rental-workflow') {
 	// ════════════════════════════════════════════════════════════════════════
-		if (!isModEnabled('expedition')) {
-			dsLog('❌ Module Expéditions requis.', 'error');
+		if (!isModEnabled('expedition') || !isModEnabled('productreturn')) {
+			dsLog('❌ Modules Expéditions et ProductReturn requis.', 'error');
 			goto render;
 		}
+		
 		$fk_project = GETPOST('fk_project', 'int');
-		if ($fk_project <= 0) {
-			dsLog('❌ Projet de location requis.', 'error');
-			goto render;
-		}
-
+		$grid_exp_pct = GETPOST('grid_exp_pct', 'array');
+		$grid_exp_date = GETPOST('grid_exp_date', 'array');
+		$grid_exp_wh = GETPOST('grid_exp_wh', 'array');
+		$grid_ret_pct = GETPOST('grid_ret_pct', 'array');
+		$grid_ret_date = GETPOST('grid_ret_date', 'array');
+		$grid_ret_wh = GETPOST('grid_ret_wh', 'array');
+		$gen_rec = GETPOST('gen_recurring_invoices', 'int');
+		
+		if ($fk_project <= 0) { dsLog('❌ Projet de location requis.', 'error'); goto render; }
+		
 		require_once DOL_DOCUMENT_ROOT . '/expedition/class/expedition.class.php';
+		require_once DOL_DOCUMENT_ROOT . '/custom/productreturn/class/productreturn.class.php';
 		require_once DOL_DOCUMENT_ROOT . '/commande/class/commande.class.php';
 		require_once DOL_DOCUMENT_ROOT . '/projet/class/project.class.php';
-
+		
 		$project = new Project($db);
-		if ($project->fetch($fk_project) <= 0) {
-			dsLog('❌ Projet introuvable.', 'error');
-			goto render;
+		if ($project->fetch($fk_project) <= 0) { dsLog('❌ Projet introuvable.', 'error'); goto render; }
+		
+		// Force negative stock to allow simulation without stock constraints
+		global $conf;
+		if (empty($conf->global->STOCK_ALLOW_NEGATIVE_TRANSFER)) {
+			require_once DOL_DOCUMENT_ROOT . '/core/lib/admin.lib.php';
+				dolibarr_set_const($db, 'STOCK_ALLOW_NEGATIVE_TRANSFER', '1', 'chaine', 0, '', $conf->entity);
+			dsLog('ℹ️ Option "Autoriser les stocks négatifs" activée automatiquement.', 'info');
 		}
 
-		// Find the first warehouse linked to the project
-		$warehouse_id = 0;
-		$reswh = $db->query("SELECT rowid FROM " . MAIN_DB_PREFIX . "entrepot WHERE fk_project=" . $fk_project . " ORDER BY rowid ASC LIMIT 1");
-		if ($reswh && ($owh = $db->fetch_object($reswh))) {
-			$warehouse_id = $owh->rowid;
-		}
-		if ($warehouse_id <= 0) {
-			dsLog('❌ Aucun entrepôt associé à ce projet LLD. Expédition impossible.', 'error');
-			goto render;
-		}
-
-		// Get all validated orders of this project
-		$sqlc = "SELECT rowid FROM " . MAIN_DB_PREFIX . "commande WHERE fk_projet=" . $fk_project . " AND source=1";
+		$expeditions_by_group = array();
+		$returns_by_group = array();
+		
+		$sqlc = "SELECT rowid FROM " . MAIN_DB_PREFIX . "commande WHERE fk_projet=" . $fk_project . " AND fk_statut IN(1,2,3)";
 		$resc = $db->query($sqlc);
-		if (!$resc) {
-			dsLog('❌ Erreur SQL: ' . $db->error(), 'error');
-			goto render;
-		}
-
-		$ok = 0;
-		$ko = 0;
-		$total_cmds = $db->num_rows($resc);
-		$processed = 0;
-		if ($total_cmds == 0) {
-			dsLog('⚠ Aucune commande de location trouvée pour ce projet.', 'warn');
-		}
-
-		while ($objcmd = $db->fetch_object($resc)) {
-			$processed++;
+		
+		$orders_lines = array();
+		while ($resc && $objcmd = $db->fetch_object($resc)) {
 			$cmd = new Commande($db);
 			if ($cmd->fetch($objcmd->rowid) > 0) {
-				$cmd->fetch_thirdparty();
-				
-				$exp = new Expedition($db);
+			    $cmd->fetch_thirdparty();
+			    foreach($cmd->lines as $l) {
+			        $orders_lines[$l->id] = array('cmd' => clone $cmd, 'line' => clone $l);
+			    }
+			}
+		}
+		
+		if (is_array($grid_exp_pct)) {
+		    foreach($grid_exp_pct as $line_id => $months) {
+		        if (isset($orders_lines[$line_id])) {
+		            $lineData = $orders_lines[$line_id];
+		            $qty_total = $lineData['line']->qty;
+		            foreach($months as $month_str => $pct) {
+		                $pct = (float)$pct;
+		                if ($pct > 0) {
+		                    $qty_to_ship = max(1, round(($qty_total * $pct) / 100));
+                            $date_str = !empty($grid_exp_date[$line_id][$month_str]) ? $grid_exp_date[$line_id][$month_str] : $month_str . '-01';
+                            $wh_id = !empty($grid_exp_wh[$line_id][$month_str]) ? (int)$grid_exp_wh[$line_id][$month_str] : 1;
+                            $group_key = $date_str . '|' . $wh_id;
+		                    $expeditions_by_group[$group_key][$lineData['cmd']->id][] = array('line' => $lineData['line'], 'qty' => $qty_to_ship, 'cmd' => $lineData['cmd'], 'date' => $date_str, 'wh_id' => $wh_id);
+		                }
+		            }
+		        }
+		    }
+		}
+		
+		if (is_array($grid_ret_pct)) {
+		    foreach($grid_ret_pct as $line_id => $months) {
+		        if (isset($orders_lines[$line_id])) {
+		            $lineData = $orders_lines[$line_id];
+		            $qty_total = $lineData['line']->qty;
+		            foreach($months as $month_str => $pct) {
+		                $pct = (float)$pct;
+		                if ($pct > 0) {
+		                    $qty_to_ret = max(1, round(($qty_total * $pct) / 100));
+                            $date_str = !empty($grid_ret_date[$line_id][$month_str]) ? $grid_ret_date[$line_id][$month_str] : $month_str . '-01';
+                            $wh_id = !empty($grid_ret_wh[$line_id][$month_str]) ? (int)$grid_ret_wh[$line_id][$month_str] : 1;
+                            $group_key = $date_str . '|' . $wh_id;
+		                    $returns_by_group[$group_key][$lineData['cmd']->id][] = array('line' => $lineData['line'], 'qty' => $qty_to_ret, 'cmd' => $lineData['cmd'], 'date' => $date_str, 'wh_id' => $wh_id);
+		                }
+		            }
+		        }
+		    }
+		}
+		
+		$ok = 0; $ko = 0;
+		
+		foreach($expeditions_by_group as $group_key => $cmds) {
+		    foreach($cmds as $cmd_id => $linesToShip) {
+		        $cmd = $linesToShip[0]['cmd'];
+                $mdate = strtotime($linesToShip[0]['date']);
+                $wh_id = $linesToShip[0]['wh_id'];
+                
+		        $exp = new Expedition($db);
 				$exp->socid = $cmd->socid;
 				$exp->origin = 'commande';
 				$exp->origin_id = $cmd->id;
-				$exp->weight_units = 0;
-				$exp->weight = 0;
-				$exp->size = 0;
-				$exp->size_units = 0;
+				$exp->date_creation = $mdate;
+				$exp->date_delivery = $mdate;
+				$exp->array_options = array('options_rental_date_start' => $mdate);
 				
-				$lines_to_ship = array();
-				foreach ($cmd->lines as $line) {
-					$sql_shipped = "SELECT COALESCE(SUM(qty), 0) as q FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet=" . $line->id . " AND e.fk_statut>0";
-					$res_sh = $db->query($sql_shipped);
-					$q_shipped = ($res_sh && ($osh = $db->fetch_object($res_sh))) ? $osh->q : 0;
-					$reste = $line->qty - $q_shipped;
-					if ($reste > 0) {
-						$lines_to_ship[] = array(
-							'origin_line_id' => $line->id,
-							'qty' => $reste,
-							'rang' => $line->rang
-						);
-					}
+				foreach ($linesToShip as $l) {
+				    $expline = new ExpeditionLigne($db);
+					$expline->entrepot_id = $wh_id;
+					$expline->origin_line_id = $l['line']->id;
+					$expline->qty = $l['qty'];
+					$expline->rang = $l['line']->rang;
+					$exp->lines[] = $expline;
 				}
-
-				if (count($lines_to_ship) > 0) {
-					$exp->date_creation = dol_now();
-					$exp->date_delivery = dol_now();
-					
-					foreach ($lines_to_ship as $l) {
-						$expline = new ExpeditionLigne($db);
-						$expline->entrepot_id = $warehouse_id;
-						$expline->origin_line_id = $l['origin_line_id'];
-						$expline->qty = $l['qty'];
-						$expline->rang = $l['rang'];
-						$exp->lines[] = $expline;
-					}
-
-					$r = $exp->create($fuser);
-					if ($r > 0) {
-						$exp->valid($fuser);
-						$qte_totale = array_sum(array_column($lines_to_ship, 'qty'));
-						dsLog('✔ | ' . $exp->ref . ' | Commande: ' . $cmd->ref . ' | Projet: ' . $project->ref . ' | ' . htmlspecialchars($cmd->thirdparty->nom) . ' | ' . $qte_totale . ' expédié(s)', 'success');
-						$ok++;
-					} else {
-						$errStr = $exp->error ?: (is_array($exp->errors) ? join(', ', $exp->errors) : 'Erreur expédition');
-						dsLog('✘ Erreur création expédition pour ' . $cmd->ref . ' — ' . $errStr, 'error');
-						$ko++;
-					}
+				$r = $exp->create($fuser);
+				if ($r > 0) {
+					$exp->valid($fuser);
+					dsLog('✔ Expédition créée pour ' . dol_print_date($mdate, 'day') . ' (Entrepôt ID: '.$wh_id.') | Cmd: ' . $cmd->ref, 'success');
+					$ok++;
+				} else {
+				    dsLog('✘ Erreur expédition: ' . $exp->error, 'error');
+					$ko++;
 				}
-			}
-			dolinstreamProgress($processed, $total_cmds);
+		    }
 		}
-		dolinstreamProgress($total_cmds, $total_cmds, true);
-		dsLog('─── ' . $ok . ' expédition(s) créée(s), ' . $ko . ' erreur(s) ───');
+		
+		foreach($returns_by_group as $group_key => $cmds) {
+		    foreach($cmds as $cmd_id => $linesToRet) {
+		        $cmd = $linesToRet[0]['cmd'];
+                $mdate = strtotime($linesToRet[0]['date']);
+                $wh_id = $linesToRet[0]['wh_id'];
+                
+		        $pr = new Productreturn($db);
+				$pr->socid = $cmd->socid;
+				$pr->origin = 'commande';
+				$pr->origin_id = $cmd->id;
+				$pr->fk_projet = $cmd->fk_project;
+				$pr->date_return = $mdate;
+				$pr->statut = 0;
+				$pr->brouillon = 1;
+				$pr->array_options = array('options_rental_date_end' => $mdate);
+				
+				$res = $pr->create($fuser);
+				if ($res > 0) {
+				    foreach ($linesToRet as $l) {
+				        $pr->addline($wh_id, $l['line']->id, $l['line']->fk_product, $l['qty'], $l['qty'], $l['qty'], array(), '', false);
+				    }
+				    $pr->valid($fuser);
+					dsLog('✔ Retour créé pour ' . dol_print_date($mdate, 'day') . ' | Cmd: ' . $cmd->ref . ' | Entrepôt: ' . $wh_id, 'success');
+					$ok++;
+				} else {
+				    dsLog('✘ Erreur retour: ' . $pr->error, 'error');
+					$ko++;
+				}
+		    }
+		}
+		
+		if ($gen_rec) {
+		    $resRec = $db->query("SELECT rowid, ref FROM " . MAIN_DB_PREFIX . "facture_rec WHERE fk_projet=" . $fk_project);
+		    while ($resRec && $objRec = $db->fetch_object($resRec)) {
+		        dsLog('ℹ️ Facture récurrente trouvée : ' . $objRec->ref . ' (Prise en compte par les crons)', 'info');
+		    }
+		}
+		
+		dsLog('─── ' . $ok . ' opérations créées, ' . $ko . ' erreur(s) ───');
 
-	// ════════════════════════════════════════════════════════════════════════
 	} elseif ($script === 'workflow-opp-cl-pr') {
 	// ════════════════════════════════════════════════════════════════════════
 		// Workflow : chaque itération crée ① un client ② une opportunité liée
@@ -1909,104 +2000,6 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 
 	// ════════════════════════════════════════════════════════════════════════
 	
-	} elseif ($script === 'generate-rental-return') {
-	// =========================================================================================
-		if (!isModEnabled('productreturn')) {
-			dsLog('⚠️ Module ProductReturn requis.', 'error');
-			goto render;
-		}
-		require_once DOL_DOCUMENT_ROOT . '/commande/class/commande.class.php';
-		require_once DOL_DOCUMENT_ROOT . '/custom/productreturn/class/productreturn.class.php';
-
-		$fk_commande = GETPOST('fk_commande', 'int');
-		$nb = GETPOST('nb', 'int') ?: 1;
-
-		if ($fk_commande <= 0) {
-			dsLog('⚠️ Commande de location requise.', 'error');
-			goto render;
-		}
-
-		$cmd = new Commande($db);
-		if ($cmd->fetch($fk_commande) <= 0) {
-			dsLog('⚠️ Impossible de charger la commande.', 'error');
-			goto render;
-		}
-
-		// Find shipped lines
-		$shippedLines = array();
-		foreach ($cmd->lines as $line) {
-			if ($line->product_type == 0) {
-				$shipped = 0;
-				$sql = "SELECT SUM(ed.qty) as qty FROM " . MAIN_DB_PREFIX . "expeditiondet ed JOIN " . MAIN_DB_PREFIX . "expedition e ON e.rowid=ed.fk_expedition WHERE ed.fk_elementdet = " . $line->id . " AND e.fk_statut > 0";
-				$res_ship = $db->query($sql);
-				if ($res_ship && $obj = $db->fetch_object($res_ship)) { $shipped = (int)$obj->qty; }
-				
-				// Find returned qty
-				$returned = 0;
-				$sql2 = "SELECT SUM(pd.qty_returned) as qty FROM " . MAIN_DB_PREFIX . "productreturndet pd JOIN " . MAIN_DB_PREFIX . "productreturn p ON p.rowid=pd.fk_productreturn WHERE pd.origin_line_id = " . $line->id . " AND p.statut > 0";
-				$res_ret = $db->query($sql2);
-				if ($res_ret && $obj = $db->fetch_object($res_ret)) { $returned = (int)$obj->qty; }
-				
-				$rem_returnable = max(0, $shipped - $returned);
-				if ($rem_returnable > 0) {
-					$shippedLines[] = array(
-						'id' => $line->id,
-						'fk_product' => $line->fk_product,
-						'max_qty' => $rem_returnable,
-						'entrepot_id' => 1 // Default warehouse
-					);
-				}
-			}
-		}
-
-		if (empty($shippedLines)) {
-			dsLog('⚠️ Aucun produit expédié disponible pour un retour sur cette commande.', 'error');
-			goto render;
-		}
-
-		$ok = 0; $ko = 0;
-		for ($i = 0; $i < $nb; $i++) {
-			$pr = new Productreturn($db);
-			$pr->socid = $cmd->socid;
-			$pr->origin = 'commande';
-			$pr->origin_id = $cmd->id;
-			$pr->fk_projet = $cmd->fk_project;
-			$pr->date_return = $cmd->date_commande + (86400 * rand(30, 300));
-			$pr->statut = 0;
-			$pr->brouillon = 1;
-
-			$res = $pr->create($user);
-			if ($res > 0) {
-				$total_ret = 0;
-				foreach ($shippedLines as &$sline) {
-					if ($sline['max_qty'] <= 0) continue;
-					if (rand(0, 100) > 30) {
-						$qty_to_return = rand(1, $sline['max_qty']);
-						$pr->addline($sline['entrepot_id'], $sline['id'], $sline['fk_product'], $qty_to_return, $qty_to_return, $qty_to_return, array(), '', false);
-						$sline['max_qty'] -= $qty_to_return;
-						$total_ret += $qty_to_return;
-					}
-				}
-				
-				if ($total_ret > 0) {
-					$pr->valid($user);
-					dsLog('✅ Retour loc #'.$res.' généré (' . $total_ret . ' produits)', 'success');
-					$ok++;
-					$logLines[] = '| ' . $pr->ref . ' | ' . $cmd->ref . ' | ' . ($cmd->fk_project ? 'PRJ-'.$cmd->fk_project : '-') . ' | ' . getSocName($cmd->socid) . ' | ' . $total_ret;
-				} else {
-					dsLog('❌ Retour #'.$res.' ignoré car vide', 'warn');
-				}
-			} else {
-				dsLog('❌ Erreur création retour: ' . $pr->error, 'error');
-				$ko++;
-			}
-			
-			$canReturn = false;
-			foreach ($shippedLines as $sline) { if ($sline['max_qty'] > 0) $canReturn = true; }
-			if (!$canReturn) break;
-		}
-		dsLog('🏁 ' . $ok . ' OK, ' . $ko . ' erreur(s) 🏁');
-
 	} elseif ($script === 'purge-data') {
 	// ════════════════════════════════════════════════════════════════════════
 		if (!$user->admin && !$user->hasRight('dolistream', 'purge', 'run')) {
@@ -2554,16 +2547,16 @@ $scriptDefs = array(
 			array('name' => 'qty_val', 'label' => 'Quantité (ou max)', 'type' => 'number', 'default' => 1, 'min' => 1, 'max' => 1000)
 		),
 	),
-	'generate-rental-expedition' => array(
-		'label'   => 'Expédition Loc',
+	'generate-rental-workflow' => array(
+		'label'   => 'Flux location',
 		'icon'    => 'sending',
 		'hint'    => 'Génère des expéditions réparties sur 1 an pour une commande LLD sélectionnée.',
 		'danger'  => false,
 		'perm'    => 'generate',
 		'columns' => array('Réf Exp.', 'Commande', 'Mois', 'Qté Expédiée', 'Lot/Série'),
 		'fields'  => array(
-			array('name' => 'fk_commande', 'label' => 'Commande de location', 'type' => 'select_rental_order'),
-			array('name' => 'grid', 'label' => '', 'type' => 'custom_expedition_grid')
+			array('name' => 'fk_project', 'label' => 'Projet de location', 'type' => 'select_rental_project'),
+			array('name' => 'grid', 'label' => '', 'type' => 'custom_rental_flow_grid')
 		),
 	),
 
@@ -2575,7 +2568,7 @@ $scriptDefs = array(
 		'perm'    => 'generate',
 		'columns' => array('Réf Retour', 'Commande', 'Projet LLD', 'Tiers', 'Nb Produits Retournés'),
 		'fields'  => array(
-			array('name' => 'fk_commande', 'label' => 'Commande de location', 'type' => 'select_rental_order'),
+			array('name' => 'fk_project', 'label' => 'Projet de location', 'type' => 'select_rental_project'),
 			array('name' => 'nb', 'label' => 'Retours aléatoires à générer', 'type' => 'number', 'default' => 1, 'min' => 1, 'max' => 20)
 		),
 	),
@@ -3127,17 +3120,38 @@ print dol_get_fiche_head($head, $activeTab, 'DoliStream', -1, 'technic');
             <option value="">-- Sélectionnez un projet LLD --</option>
           <?php
             global $db;
-            $res = $db->query("SELECT p.rowid, p.ref, p.title FROM " . MAIN_DB_PREFIX . "projet p LEFT JOIN " . MAIN_DB_PREFIX . "projet_extrafields pe ON pe.fk_object=p.rowid WHERE p.fk_statut > 0 AND pe.rental_ltrproject=2 ORDER BY p.rowid DESC LIMIT 100");
+            $res = $db->query("SELECT p.rowid, p.ref, p.title FROM " . MAIN_DB_PREFIX . "projet p LEFT JOIN " . MAIN_DB_PREFIX . "projet_extrafields pe ON pe.fk_object=p.rowid WHERE p.fk_statut >= 0 AND pe.rental_ltrproject=2 ORDER BY p.rowid DESC LIMIT 100");
             while ($res && $obj = $db->fetch_object($res)) {
               print '<option value="'.$obj->rowid.'">'.htmlspecialchars($obj->ref . ' - ' . $obj->title).'</option>';
             }
           ?>
           </select>
+          
+          <span style="display:inline-block; margin-left: 20px;">
+              <b>Entrepôt d'expédition par défaut :</b>&nbsp;
+              <select id="default_exp_warehouse" name="default_exp_warehouse" class="flat" style="min-width:200px;">
+              <?php
+                $resWh = $db->query("SELECT rowid, ref FROM " . MAIN_DB_PREFIX . "entrepot WHERE statut = 1 AND (fk_project IS NULL OR fk_project = 0) ORDER BY ref");
+                while ($resWh && $objWh = $db->fetch_object($resWh)) {
+                    $shortName = strpos($objWh->ref, ' > ') !== false ? substr($objWh->ref, strrpos($objWh->ref, ' > ') + 3) : $objWh->ref;
+                    print '<option value="'.$objWh->rowid.'" title="'.htmlspecialchars($objWh->ref).'">'.htmlspecialchars($shortName).'</option>';
+                }
+              ?>
+              </select>
+          </span>
           <script>
             document.addEventListener('DOMContentLoaded', function() {
+              let sel = document.getElementById('ds-fld-<?php print $field['name']; ?>');
               if (typeof jQuery !== 'undefined' && jQuery.fn.select2) {
-                jQuery('#ds-fld-<?php print $field['name']; ?>').select2({ width: '300px' });
+                jQuery(sel).select2({ width: '300px' }).on('change', function() {
+                    if (typeof loadRentalFlowGrid === 'function') loadRentalFlowGrid(this.value);
+                });
+              } else if (sel) {
+                sel.addEventListener('change', function() {
+                    if (typeof loadRentalFlowGrid === 'function') loadRentalFlowGrid(this.value);
+                });
               }
+              if (sel && sel.value && typeof loadRentalFlowGrid === 'function') loadRentalFlowGrid(sel.value);
             });
           </script>
         <?php elseif ($field['type'] === 'select_rental_order'): ?>
@@ -3165,26 +3179,30 @@ print dol_get_fiche_head($head, $activeTab, 'DoliStream', -1, 'technic');
               }
             });
           </script>
-        <?php elseif ($field['type'] === 'custom_expedition_grid'): ?>
+                <?php elseif ($field['type'] === 'custom_rental_flow_grid'): ?>
           </label></div><div style="width:100%; margin-bottom: 20px;">
-          <div id="expedition_grid_container" style="margin-top: 15px; width: 100%; overflow-x: auto; background: #fff; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-             <p class="opacitymedium"><em>Sélectionnez une commande pour afficher la grille de répartition.</em></p>
+          <div id="rental_grid_container" style="margin-top: 15px; width: 100%; overflow-x: auto; background: #fff; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+             <p class="opacitymedium"><em>Sélectionnez un projet de location pour afficher la grille de répartition.</em></p>
           </div>
           <script>
-                        function loadExpeditionGrid(commande_id) {
-                if (!commande_id) {
-                    document.getElementById('expedition_grid_container').innerHTML = '<p class="opacitymedium"><em>Sélectionnez une commande pour afficher la grille de répartition.</em></p>';
-                    return;
-                }
-                document.getElementById('expedition_grid_container').innerHTML = 'Chargement des produits...';
+function loadRentalFlowGrid(project_id) {
+                try {
+                    if (!project_id) {
+                        document.getElementById('rental_grid_container').innerHTML = '<p class="opacitymedium"><em>Sélectionnez un projet pour afficher la grille.</em></p>';
+                        return;
+                    }
+                    document.getElementById('rental_grid_container').innerHTML = 'Chargement des données...';
+
                 
-                fetch('?action=fetch_order_lines&fk_commande=' + commande_id)
+                fetch('?action=fetch_project_flow_data&fk_project=' + project_id)
                 .then(r => r.json())
                 .then(data => {
-                    if (data.error) { document.getElementById('expedition_grid_container').innerHTML = '<span style="color:red">'+data.error+'</span>'; return; }
+                    if (data.error) { document.getElementById('rental_grid_container').innerHTML = '<span style="color:red">'+data.error+'</span>'; return; }
                     
-                                                            let html = '<table class="liste" style="width:100%; margin-top:10px;"><tr class="liste_titre">';
-                    html += '<th>Produit</th><th>Qté Cmd</th><th>Déjà Exp</th><th>Reste</th>';
+                    let html = '<table class="liste" style="width:100%; margin-top:10px; border-collapse:collapse;">';
+                    html += '<tr class="liste_titre">';
+                    html += '<th style="text-align:left;">Produit / Cmd</th><th style="text-align:center; width: 100px;">Flux</th><th style="text-align:center; width: 100px;">Paramètre</th>';
+                    
                     let mDate = new Date(data.start_date);
                     let months = [];
                     for(let i=0; i<12; i++) {
@@ -3192,56 +3210,214 @@ print dol_get_fiche_head($head, $activeTab, 'DoliStream', -1, 'technic');
                         let m = mDate.getMonth() + 1;
                         let sDate = y + '-' + (m < 10 ? '0'+m : m) + '-01';
                         let sLabel = (m < 10 ? '0'+m : m) + '/' + y;
-                        months.push(sDate);
-                        html += '<th style="text-align:center; font-size:0.9em;">' + sLabel + '</th>';
+                        let lastDay = new Date(y, m, 0).getDate();
+                        let eDate = y + '-' + (m < 10 ? '0'+m : m) + '-' + lastDay;
+                        months.push({val: sDate, end: eDate, label: sLabel});
+                        html += '<th style="text-align:center; font-size:0.9em; min-width:80px;">' + sLabel + '</th>';
                         mDate.setMonth(mDate.getMonth() + 1);
                     }
-                    html += '</tr>';
+                    html += '<th style="text-align:center; width: 60px;">Total</th></tr>';
+                    
+                    let whRetOptions = '';
+                    data.warehouses.forEach(wh => { 
+                        let shortName = wh.ref.indexOf(' > ') !== -1 ? wh.ref.split(' > ').pop() : wh.ref;
+                        whRetOptions += '<option value="'+wh.id+'" title="'+wh.ref+'">'+shortName+'</option>'; 
+                    });
+                    if(whRetOptions === '') whRetOptions = '<option value="0">Aucun</option>';
+                    
+                    let whExpOptions = '';
+                    if(data.classic_warehouses) {
+                        data.classic_warehouses.forEach(wh => { 
+                            let shortName = wh.ref.indexOf(' > ') !== -1 ? wh.ref.split(' > ').pop() : wh.ref;
+                            whExpOptions += '<option value="'+wh.id+'" title="'+wh.ref+'">'+shortName+'</option>'; 
+                        });
+                    }
+                    if(whExpOptions === '') whExpOptions = '<option value="0">Aucun</option>';
                     
                     data.lines.forEach(line => {
-                        html += '<tr class="oddeven">';
-                        html += '<td>'+line.ref+'</td><td>'+line.qty+'</td><td>'+line.qty_shipped+'</td>';
-                        html += '<td><strong id="rem_'+line.id+'" data-tot="'+line.qty_rem+'">'+line.qty_rem+'</strong></td>';
+                        // EXPEDITION (3 rows)
+                        html += '<tr class="oddeven" style="border-top:2px solid #ccc;">';
+                        html += '<td rowspan="6" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span></td>';
+                        html += '<td rowspan="3" style="background:#eef7e6; color:#2e7d32; font-weight:bold; text-align:center; vertical-align:middle;">Expédition</td>';
+                        html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em; font-weight:bold;">Quantité (%)</td>';
                         months.forEach(m => {
-                            html += '<td align="center"><input type="number" min="0" class="flat grid-input" data-line="'+line.id+'" name="grid['+line.id+']['+m+']" value="0" style="width:40px; text-align:center;" onchange="updateGridTot(this, '+line.id+')"></td>';
+                            html += '<td align="center" style="background:#f9fdf5;"><input type="number" min="0" max="100" class="flat grid-input-exp-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_exp_pct['+line.id+']['+m.val+']" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'exp\')"> <span style="font-size:0.8em; color:#888;">%</span></td>';
+                        });
+                        html += '<td rowspan="3" align="center" style="background:#f9fdf5; vertical-align:middle;"><strong id="tot_exp_'+line.id+'">0%</strong></td>';
+                        html += '</tr>';
+                        
+                        html += '<tr class="oddeven">';
+                        html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em;"><i class="fa fa-calendar"></i> Date</td>';
+                        months.forEach(m => {
+                            html += '<td align="center" style="background:#f9fdf5;"><input type="date" name="grid_exp_date['+line.id+']['+m.val+']" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-exp-date" data-line="'+line.id+'" style="width:105px; font-size:0.85em;"></td>';
+                        });
+                        html += '</tr>';
+                        
+                        html += '<tr class="oddeven">';
+                        html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em;"><i class="fa fa-truck"></i> Entrepôt</td>';
+                        months.forEach(m => {
+                            html += '<td align="center" style="background:#f9fdf5;"><select name="grid_exp_wh['+line.id+']['+m.val+']" class="flat grid-input-exp-wh" data-line="'+line.id+'" style="max-width:110px; font-size:0.85em;">'+whExpOptions+'</select></td>';
+                        });
+                        html += '</tr>';
+                        
+                        // RETOUR (3 rows)
+                        html += '<tr class="oddeven" style="border-top:1px dashed #ccc;">';
+                        html += '<td rowspan="3" style="background:#fff4e6; color:#e65100; font-weight:bold; text-align:center; vertical-align:middle;">Retour</td>';
+                        html += '<td style="background:#fff4e6; text-align:center; font-size:0.85em; font-weight:bold;">Quantité (%)</td>';
+                        months.forEach(m => {
+                            html += '<td align="center" style="background:#fffcf5;"><input type="number" min="0" max="100" class="flat grid-input-ret-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_ret_pct['+line.id+']['+m.val+']" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'ret\')"> <span style="font-size:0.8em; color:#888;">%</span></td>';
+                        });
+                        html += '<td rowspan="3" align="center" style="background:#fffcf5; vertical-align:middle;"><strong id="tot_ret_'+line.id+'">0%</strong></td>';
+                        html += '</tr>';
+                        
+                        html += '<tr class="oddeven">';
+                        html += '<td style="background:#fff4e6; text-align:center; font-size:0.85em;"><i class="fa fa-calendar"></i> Date</td>';
+                        months.forEach(m => {
+                            html += '<td align="center" style="background:#fffcf5;"><input type="date" name="grid_ret_date['+line.id+']['+m.val+']" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-ret-date" data-line="'+line.id+'" style="width:105px; font-size:0.85em;"></td>';
+                        });
+                        html += '</tr>';
+                        
+                        html += '<tr class="oddeven">';
+                        html += '<td style="background:#fff4e6; text-align:center; font-size:0.85em;"><i class="fa fa-truck"></i> Entrepôt</td>';
+                        months.forEach(m => {
+                            html += '<td align="center" style="background:#fffcf5;"><select name="grid_ret_wh['+line.id+']['+m.val+']" class="flat grid-input-ret-wh" data-line="'+line.id+'" style="max-width:110px; font-size:0.85em;">'+whRetOptions+'</select></td>';
                         });
                         html += '</tr>';
                     });
                     
+                    // Ligne de boutons "Exécuter ce mois"
+                    html += '<tr class="liste_titre" style="border-top:2px solid #aaa;">';
+                    html += '<th colspan="3" style="text-align:right;">Exécuter colonne par colonne :</th>';
+                    months.forEach(m => {
+                        html += '<th style="text-align:center;"><button type="button" class="button" style="padding: 4px 8px; font-size:0.85em;" onclick="executeMonth(\''+m.val+'\')">▶ Go</button></th>';
+                    });
+                    html += '<th></th></tr>';
+                    
                     html += '</table>';
-                    html += '<div style="margin-top:10px;"><button type="button" class="button" onclick="randomizeGrid()">Répartir Aléatoirement</button></div>';
-                    document.getElementById('expedition_grid_container').innerHTML = html;
-                }).catch(e => { document.getElementById('expedition_grid_container').innerHTML = 'Erreur: ' + e; });
-            }
-            
-            function updateGridTot(input, lineId) {
-                let inputs = document.querySelectorAll('input.grid-input[data-line="'+lineId+'"]');
-                let sum = 0; inputs.forEach(i => sum += parseInt(i.value || 0));
-                let remEl = document.getElementById('rem_'+lineId);
-                let tot = parseInt(remEl.getAttribute('data-tot'));
-                let diff = tot - sum;
-                remEl.innerHTML = diff;
-                if (diff < 0) remEl.style.color = 'red'; else if (diff > 0) remEl.style.color = 'orange'; else remEl.style.color = 'green';
-            }
-            
-            function randomizeGrid() {
-                let inputs = document.querySelectorAll('input.grid-input');
-                inputs.forEach(i => i.value = 0);
-                let lines = {};
-                inputs.forEach(i => { let id = i.getAttribute('data-line'); if (!lines[id]) lines[id] = []; lines[id].push(i); });
-                for(let id in lines) {
-                    let remEl = document.getElementById('rem_'+id);
-                    let tot = parseInt(remEl.getAttribute('data-tot'));
-                    let arr = lines[id];
-                    while(tot > 0) {
-                        let idx = Math.floor(Math.random() * arr.length);
-                        let val = parseInt(arr[idx].value || 0);
-                        arr[idx].value = val + 1; tot--;
-                    }
-                    updateGridTot(arr[0], id);
+                    
+                    html += '<div style="margin-top:20px; padding:15px; background:#f5f5f5; border:1px solid #ddd; border-radius:4px;">';
+                    html += '<table style="width:100%;"><tr>';
+                    html += '<td style="width:100%; vertical-align:top;">';
+                    html += '<b><i class="fa fa-file-invoice-dollar" style="margin-right:5px; color:#2e7d32;"></i> Options globales :</b><br><br>';
+                    html += '<label><input type="checkbox" name="gen_recurring_invoices" value="1" checked> Générer les factures récurrentes mensuelles depuis les expéditions générées</label>';
+                    html += '</td></tr></table>';
+                    html += '</div>';
+
+                    html += '<div style="margin-top:15px; display:flex; gap:10px;">';
+                    html += '<button type="button" class="button" onclick="randomizeFlowGrid(\''+data.start_date+'\')"><i class="fa fa-magic"></i> Répartir Aléatoirement</button>';
+                    html += '<button type="button" class="button" onclick="resetFlowGrid()"><i class="fa fa-trash"></i> Effacer la grille</button>';
+                    html += '</div>';
+                    
+                    document.getElementById('rental_grid_container').innerHTML = html;
+                }).catch(e => { document.getElementById('rental_grid_container').innerHTML = 'Erreur: ' + e; });
+                } catch(err) {
+                    document.getElementById('rental_grid_container').innerHTML = 'Erreur JS interne: ' + err;
                 }
             }
-          </script>
+            
+            function updateGridTot(input, lineId, type) {
+                let inputs = document.querySelectorAll('input.grid-input-'+type+'-pct[data-line="'+lineId+'"]');
+                let sum = 0; inputs.forEach(i => sum += parseInt(i.value || 0));
+                let totEl = document.getElementById('tot_'+type+'_'+lineId);
+                totEl.innerHTML = sum + '%';
+                if (sum < 100) totEl.style.color = 'orange'; else if (sum > 100) totEl.style.color = 'red'; else totEl.style.color = 'green';
+            }
+            
+            function randomizeFlowGrid(startDate) {
+                let inputsExpPct = document.querySelectorAll('input.grid-input-exp-pct');
+                let inputsRetPct = document.querySelectorAll('input.grid-input-ret-pct');
+                
+                inputsExpPct.forEach(i => i.value = 0);
+                inputsRetPct.forEach(i => i.value = 0);
+                
+                let lines = {};
+                inputsExpPct.forEach(i => { let id = i.getAttribute('data-line'); if (!lines[id]) lines[id] = {exp:[], ret:[]}; lines[id].exp.push(i); });
+                inputsRetPct.forEach(i => { let id = i.getAttribute('data-line'); if (lines[id]) lines[id].ret.push(i); });
+                
+                for(let id in lines) {
+                    let arrExp = lines[id].exp;
+                    let arrRet = lines[id].ret;
+                    let totExp = 100;
+                    let totRet = 100;
+                    
+                    while(totExp > 0) {
+                        let idx = Math.floor(Math.random() * Math.min(3, arrExp.length));
+                        let val = parseInt(arrExp[idx].value || 0);
+                        let add = Math.min(totExp, Math.floor(Math.random() * 20) + 10);
+                        arrExp[idx].value = val + add;
+                        totExp -= add;
+                    }
+                    if(totExp < 0) { arrExp[0].value = parseInt(arrExp[0].value) + totExp; }
+                    
+                    while(totRet > 0) {
+                        let idx = Math.floor(Math.random() * 4) + (arrRet.length - 4);
+                        if(idx >= arrRet.length) idx = arrRet.length - 1;
+                        let val = parseInt(arrRet[idx].value || 0);
+                        let add = Math.min(totRet, Math.floor(Math.random() * 30) + 20);
+                        arrRet[idx].value = val + add;
+                        totRet -= add;
+                    }
+                    if(totRet < 0) { arrRet[arrRet.length-1].value = parseInt(arrRet[arrRet.length-1].value) + totRet; }
+                    
+                    updateGridTot(arrExp[0], id, 'exp');
+                    updateGridTot(arrRet[0], id, 'ret');
+                }
+                
+                // Pré-remplir les dates et entrepôts pour les mois où il y a un pourcentage
+                let globalDefExpWh = document.getElementById('default_exp_warehouse');
+                ['exp', 'ret'].forEach(type => {
+                    document.querySelectorAll('input.grid-input-'+type+'-pct').forEach(inp => {
+                        let val = parseInt(inp.value || 0);
+                        let m = inp.getAttribute('data-col');
+                        let lineId = inp.getAttribute('data-line');
+                        let dateInp = document.querySelector('input[name="grid_'+type+'_date['+lineId+']['+m+']"]');
+                        let whSel = document.querySelector('select[name="grid_'+type+'_wh['+lineId+']['+m+']"]');
+                        if (val > 0) {
+                            if(dateInp && !dateInp.value) {
+                                // Calculate target date keeping the same day if possible, bounded by the month
+                                let dayStr = startDate.split('-')[2];
+                                let yearStr = m.substring(0, 4);
+                                let monthStr = m.substring(5, 7);
+                                let targetDate = new Date(yearStr, parseInt(monthStr, 10) - 1, parseInt(dayStr, 10));
+                                if (targetDate.getMonth() !== parseInt(monthStr, 10) - 1) {
+                                    targetDate = new Date(yearStr, parseInt(monthStr, 10), 0);
+                                }
+                                let targetDateStr = targetDate.getFullYear() + '-' + String(targetDate.getMonth() + 1).padStart(2, '0') + '-' + String(targetDate.getDate()).padStart(2, '0');
+                                dateInp.value = targetDateStr;
+                            }
+                            if(whSel && whSel.options.length > 0) {
+                                if (type === 'exp' && globalDefExpWh && globalDefExpWh.value) {
+                                    whSel.value = globalDefExpWh.value;
+                                } else {
+                                    // Default to first valid warehouse
+                                    for(let i=0; i<whSel.options.length; i++) {
+                                        if(whSel.options[i].value !== "0") { whSel.selectedIndex = i; break; }
+                                    }
+                                }
+                            }
+                        } else {
+                            if(dateInp) dateInp.value = '';
+                        }
+                    });
+                });
+            }
+
+            function resetFlowGrid() {
+                document.querySelectorAll('input[type="number"]').forEach(i => { i.value = 0; i.dispatchEvent(new Event('change')); });
+                document.querySelectorAll('input[type="date"]').forEach(i => i.value = '');
+            }
+
+            function executeMonth(monthStr) {
+                // Mettre à zéro tous les pourcentages qui ne sont pas de ce mois
+                document.querySelectorAll('input.grid-input-exp-pct, input.grid-input-ret-pct').forEach(inp => {
+                    if (inp.getAttribute('data-col') !== monthStr) {
+                        inp.value = 0;
+                    }
+                });
+                // Soumettre le formulaire
+                document.getElementById('ds-run-form').submit();
+            }
+                    </script>
           </div><div style="display:none"><label>
         <?php elseif ($field['type'] === 'multiselect_rental_product'): ?>
           <select name="<?php print $field['name']; ?>[]" id="ds-fld-<?php print $field['name']; ?>" class="flat" multiple="multiple" required style="min-width:300px; max-width:500px;">
@@ -3687,3 +3863,7 @@ function dsCopy(){
 <?php
 llxFooter();
 $db->close();
+
+
+
+
