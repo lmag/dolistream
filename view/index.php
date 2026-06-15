@@ -361,6 +361,7 @@ if ($action === 'fetch_project_flow_data') {
                         'qty' => $line->qty,
                         'cmd_id' => $cmd->id,
                         'cmd_ref' => $cmd->ref,
+                        'date_start' => $line->date_start ? date('d/m/Y', $line->date_start) : '',
                         'shipped_qty' => $shipped,
                         'returned_qty' => $returned,
                         'existing_exp' => $exp_arr,
@@ -1423,8 +1424,9 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 		            foreach($months as $month_str => $blocks) {
 		                foreach($blocks as $idx => $b) {
                             $pct = (float)($b['pct'] ?? 0);
-                            if ($pct > 0) {
-                                $qty_to_ship = max(1, round(($qty_total * $pct) / 100));
+                            $fixed_qty = (float)($b['fixed_qty'] ?? 0);
+                            if ($fixed_qty > 0 || $pct > 0) {
+                                $qty_to_ship = $fixed_qty > 0 ? $fixed_qty : max(1, round(($qty_total * $pct) / 100));
                                 $date_str = !empty($b['date']) ? $b['date'] : $month_str . '-01';
                                 $wh_id = !empty($b['wh']) ? (int)$b['wh'] : 1;
                                 $group_key = $date_str . '|' . $wh_id;
@@ -1444,8 +1446,9 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 		            foreach($months as $month_str => $blocks) {
 		                foreach($blocks as $idx => $b) {
                             $pct = (float)($b['pct'] ?? 0);
-                            if ($pct > 0) {
-                                $qty_to_ret = max(1, round(($qty_total * $pct) / 100));
+                            $fixed_qty = (float)($b['fixed_qty'] ?? 0);
+                            if ($fixed_qty > 0 || $pct > 0) {
+                                $qty_to_ret = $fixed_qty > 0 ? $fixed_qty : max(1, round(($qty_total * $pct) / 100));
                                 $date_str = !empty($b['date']) ? $b['date'] : $month_str . '-01';
                                 $wh_id = !empty($b['wh']) ? (int)$b['wh'] : 1;
                                 $group_key = $date_str . '|' . $wh_id;
@@ -3338,10 +3341,11 @@ function loadRentalFlowGrid(project_id) {
                     data.lines.forEach(line => {
                         let remainExp = line.qty - line.shipped_qty;
                         let remainRet = line.shipped_qty - line.returned_qty;
+                        let dateStartHtml = line.date_start ? '<br><span style="font-size:0.85em; color:#1976d2;"><i class="fa fa-calendar"></i> Début loc: '+line.date_start+'</span>' : '';
                         
                         // EXPEDITION (1 row)
                         html += '<tr class="oddeven" style="border-top:2px solid #ccc;">';
-                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span><br><br><span style="font-size:0.85em; color:#2e7d32; white-space:nowrap;">Expédié: '+line.shipped_qty+' <br><b>(Reste: '+remainExp+')</b></span><br><br><span style="font-size:0.85em; color:#e65100; white-space:nowrap;">Retourné: '+line.returned_qty+' <br><b>(Reste: '+remainRet+')</b></span></td>';
+                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span>'+dateStartHtml+'<br><br><span style="font-size:0.85em; color:#2e7d32; white-space:nowrap;">Expédié: '+line.shipped_qty+' <br><b>(Reste: '+remainExp+')</b></span><br><br><span style="font-size:0.85em; color:#e65100; white-space:nowrap;">Retourné: '+line.returned_qty+' <br><b>(Reste: '+remainRet+')</b></span></td>';
                         html += '<td style="background:#eef7e6; color:#2e7d32; font-weight:bold; text-align:center; vertical-align:middle;">Expédition</td>';
                         html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em; font-weight:bold;">Répartition</td>';
                         months.forEach(m => {
@@ -3359,8 +3363,9 @@ function loadRentalFlowGrid(project_id) {
                             
                             // Initial block 0
                             html += '<div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">';
-                            html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px;">';
-                            html += '<div><input type="number" min="0" max="100" class="flat grid-input-exp-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_exp['+line.id+']['+m.val+'][0][pct]" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'exp\')"> <span style="font-size:0.8em; color:#888;">%</span></div>';
+                            html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:2px;">';
+                            html += '<div style="display:flex; gap:2px;"><input type="number" min="0" max="100" class="flat grid-input-exp-pct" data-col="'+m.val+'" data-line="'+line.id+'" data-total="'+line.qty+'" name="grid_exp['+line.id+']['+m.val+'][0][pct]" value="" placeholder="%" style="width:40px; text-align:center;" oninput="syncQty(this, \'pct\'); updateGridTot(this, '+line.id+', \'exp\')">';
+                            html += '<input type="number" min="0" max="'+line.qty+'" class="flat grid-input-exp-fixed" data-col="'+m.val+'" data-line="'+line.id+'" data-total="'+line.qty+'" name="grid_exp['+line.id+']['+m.val+'][0][fixed_qty]" value="" placeholder="Qté" style="width:40px; text-align:center;" oninput="syncQty(this, \'fixed\'); updateGridTot(this, '+line.id+', \'exp\')"></div>';
                             html += '<button type="button" onclick="this.closest(\'.flow-block\').remove(); updateGridTot(null, '+line.id+', \'exp\')" style="border:none;background:none;color:red;cursor:pointer;padding:0;" title="Supprimer"><i class="fa fa-times"></i></button>';
                             html += '</div>';
                             html += '<input type="date" name="grid_exp['+line.id+']['+m.val+'][0][date]" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-exp-date" data-line="'+line.id+'" style="width:100%; margin-bottom:3px; font-size:0.85em; box-sizing:border-box;">';
@@ -3392,8 +3397,9 @@ function loadRentalFlowGrid(project_id) {
                             
                             // Initial block 0
                             html += '<div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">';
-                            html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px;">';
-                            html += '<div><input type="number" min="0" max="100" class="flat grid-input-ret-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_ret['+line.id+']['+m.val+'][0][pct]" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'ret\')"> <span style="font-size:0.8em; color:#888;">%</span></div>';
+                            html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:2px;">';
+                            html += '<div style="display:flex; gap:2px;"><input type="number" min="0" max="100" class="flat grid-input-ret-pct" data-col="'+m.val+'" data-line="'+line.id+'" data-total="'+line.qty+'" name="grid_ret['+line.id+']['+m.val+'][0][pct]" value="" placeholder="%" style="width:40px; text-align:center;" oninput="syncQty(this, \'pct\'); updateGridTot(this, '+line.id+', \'ret\')">';
+                            html += '<input type="number" min="0" max="'+line.qty+'" class="flat grid-input-ret-fixed" data-col="'+m.val+'" data-line="'+line.id+'" data-total="'+line.qty+'" name="grid_ret['+line.id+']['+m.val+'][0][fixed_qty]" value="" placeholder="Qté" style="width:40px; text-align:center;" oninput="syncQty(this, \'fixed\'); updateGridTot(this, '+line.id+', \'ret\')"></div>';
                             html += '<button type="button" onclick="this.closest(\'.flow-block\').remove(); updateGridTot(null, '+line.id+', \'ret\')" style="border:none;background:none;color:red;cursor:pointer;padding:0;" title="Supprimer"><i class="fa fa-times"></i></button>';
                             html += '</div>';
                             html += '<input type="date" name="grid_ret['+line.id+']['+m.val+'][0][date]" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-ret-date" data-line="'+line.id+'" style="width:100%; margin-bottom:3px; font-size:0.85em; box-sizing:border-box;">';
@@ -3444,10 +3450,16 @@ function loadRentalFlowGrid(project_id) {
             function addBlock(type, lineId, colDate, minDate, maxDate) {
                 let container = document.getElementById('blocks_' + type + '_' + lineId + '_' + colDate);
                 let optionsHtml = type === 'exp' ? window.whExpOptionsGlobal : window.whRetOptionsGlobal;
+                let lineQty = document.querySelector('input.grid-input-'+type+'-pct[data-line="'+lineId+'"]'); // find any existing one to get the total
+                let totalData = lineQty ? lineQty.getAttribute('data-total') : '0';
+                
                 let html = `
                 <div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-                        <div><input type="number" min="0" max="100" name="grid_${type}[${lineId}][${colDate}][${blockIndexCounter}][pct]" value="0" style="width:45px; text-align:center;" class="flat grid-input-${type}-pct" data-col="${colDate}" data-line="${lineId}" onchange="updateGridTot(this, ${lineId}, '${type}')"> <span style="font-size:0.8em; color:#888;">%</span></div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:3px; gap:2px;">
+                        <div style="display:flex; gap:2px;">
+                            <input type="number" min="0" max="100" name="grid_${type}[${lineId}][${colDate}][${blockIndexCounter}][pct]" value="" placeholder="%" style="width:40px; text-align:center;" class="flat grid-input-${type}-pct" data-col="${colDate}" data-line="${lineId}" data-total="${totalData}" oninput="syncQty(this, 'pct'); updateGridTot(this, ${lineId}, '${type}')">
+                            <input type="number" min="0" max="${totalData}" name="grid_${type}[${lineId}][${colDate}][${blockIndexCounter}][fixed_qty]" value="" placeholder="Qté" style="width:40px; text-align:center;" class="flat grid-input-${type}-fixed" data-col="${colDate}" data-line="${lineId}" data-total="${totalData}" oninput="syncQty(this, 'fixed'); updateGridTot(this, ${lineId}, '${type}')">
+                        </div>
                         <button type="button" onclick="this.closest('.flow-block').remove(); updateGridTot(null, ${lineId}, '${type}')" style="border:none;background:none;color:red;cursor:pointer;padding:0;" title="Supprimer"><i class="fa fa-times"></i></button>
                     </div>
                     <input type="date" name="grid_${type}[${lineId}][${colDate}][${blockIndexCounter}][date]" min="${minDate}" max="${maxDate}" class="flat grid-input-${type}-date" data-line="${lineId}" style="width:100%; margin-bottom:3px; font-size:0.85em; box-sizing:border-box;">
@@ -3464,6 +3476,38 @@ function loadRentalFlowGrid(project_id) {
                 if (totEl) {
                     totEl.innerHTML = sum + '%';
                     if (sum < 100) totEl.style.color = 'orange'; else if (sum > 100) totEl.style.color = 'red'; else totEl.style.color = 'green';
+                }
+            }
+
+            function syncQty(input, source) {
+                let block = input.closest('.flow-block');
+                if (!block) return;
+                let pctInp = block.querySelector('input[name$="[pct]"]');
+                let fixedInp = block.querySelector('input[name$="[fixed_qty]"]');
+                let total = parseInt(input.getAttribute('data-total') || 0);
+                
+                if (source === 'pct') {
+                    let val = pctInp.value;
+                    if (val !== '' && parseFloat(val) > 0) {
+                        fixedInp.value = Math.round((parseFloat(val) / 100) * total);
+                        fixedInp.style.backgroundColor = '#eeeeee';
+                        fixedInp.readOnly = true;
+                    } else {
+                        fixedInp.style.backgroundColor = '';
+                        fixedInp.readOnly = false;
+                        fixedInp.value = '';
+                    }
+                } else if (source === 'fixed') {
+                    let val = fixedInp.value;
+                    if (val !== '' && parseFloat(val) > 0) {
+                        if (total > 0) pctInp.value = Math.round((parseFloat(val) / total) * 100);
+                        pctInp.style.backgroundColor = '#eeeeee';
+                        pctInp.readOnly = true;
+                    } else {
+                        pctInp.style.backgroundColor = '';
+                        pctInp.readOnly = false;
+                        pctInp.value = '';
+                    }
                 }
             }
             
@@ -3512,6 +3556,9 @@ function loadRentalFlowGrid(project_id) {
                     
                     if(arrExp.length > 0) updateGridTot(arrExp[0], id, 'exp');
                     if(arrRet.length > 0) updateGridTot(arrRet[0], id, 'ret');
+                    
+                    arrExp.forEach(inp => { syncQty(inp, 'pct'); });
+                    arrRet.forEach(inp => { syncQty(inp, 'pct'); });
                 }
                 
                 // Pré-remplir les dates et entrepôts pour les mois où il y a un pourcentage
