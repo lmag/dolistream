@@ -285,6 +285,60 @@ if ($action === 'fetch_project_flow_data') {
         $res['classic_warehouses'][] = array('id' => $objCWh->rowid, 'ref' => $objCWh->ref, 'label' => $objCWh->label);
     }
     
+    // Fetch existing expeditions
+    $existing_exp = array();
+    $sqlExp = "SELECT e.rowid as id, e.ref, e.date_delivery, e.date_creation, ed.fk_elementdet as cmdline_id, ed.qty ";
+    $sqlExp.= "FROM " . MAIN_DB_PREFIX . "expedition as e ";
+    $sqlExp.= "JOIN " . MAIN_DB_PREFIX . "expeditiondet as ed ON ed.fk_expedition = e.rowid ";
+    $sqlExp.= "JOIN " . MAIN_DB_PREFIX . "commandedet as cd ON cd.rowid = ed.fk_elementdet ";
+    $sqlExp.= "JOIN " . MAIN_DB_PREFIX . "commande as c ON c.rowid = cd.fk_commande ";
+    $sqlExp.= "WHERE c.fk_projet = " . $fk_project . " AND e.entity IN (" . getEntity('expedition') . ")";
+    $resExp = $db->query($sqlExp);
+    if ($resExp) {
+        require_once DOL_DOCUMENT_ROOT . '/expedition/class/expedition.class.php';
+        $tmpExp = new Expedition($db);
+        while ($obj = $db->fetch_object($resExp)) {
+            $tmpExp->id = $obj->id;
+            $tmpExp->ref = $obj->ref;
+            $date = $obj->date_delivery ?: $obj->date_creation;
+            $month = substr($date, 0, 7); // YYYY-MM
+            $existing_exp[$obj->cmdline_id][] = array(
+                'id' => $obj->id,
+                'ref' => $obj->ref,
+                'qty' => $obj->qty,
+                'month' => $month,
+                'url' => $tmpExp->getNomUrl(1)
+            );
+        }
+    }
+
+    // Fetch existing returns
+    $existing_ret = array();
+    $sqlRet = "SELECT p.rowid as id, p.ref, p.date_return, p.date_creation, pd.fk_origin_line as cmdline_id, pd.qty ";
+    $sqlRet.= "FROM " . MAIN_DB_PREFIX . "productreturn as p ";
+    $sqlRet.= "JOIN " . MAIN_DB_PREFIX . "productreturndet as pd ON pd.fk_productreturn = p.rowid ";
+    $sqlRet.= "JOIN " . MAIN_DB_PREFIX . "commandedet as cd ON cd.rowid = pd.fk_origin_line ";
+    $sqlRet.= "JOIN " . MAIN_DB_PREFIX . "commande as c ON c.rowid = cd.fk_commande ";
+    $sqlRet.= "WHERE c.fk_projet = " . $fk_project . " AND p.entity IN (" . getEntity('productreturn') . ")";
+    $resRet = $db->query($sqlRet);
+    if ($resRet) {
+        require_once DOL_DOCUMENT_ROOT . '/custom/productreturn/class/productreturn.class.php';
+        $tmpRet = new Productreturn($db);
+        while ($obj = $db->fetch_object($resRet)) {
+            $tmpRet->id = $obj->id;
+            $tmpRet->ref = $obj->ref;
+            $date = $obj->date_return ?: $obj->date_creation;
+            $month = substr($date, 0, 7); // YYYY-MM
+            $existing_ret[$obj->cmdline_id][] = array(
+                'id' => $obj->id,
+                'ref' => $obj->ref,
+                'qty' => $obj->qty,
+                'month' => $month,
+                'url' => $tmpRet->getNomUrl(1)
+            );
+        }
+    }
+    
     // Fetch order lines (only physical products)
     $sqlCmd = "SELECT rowid FROM " . MAIN_DB_PREFIX . "commande WHERE fk_projet=" . $fk_project . " AND fk_statut IN (1,2,3)";
     $resCmd = $db->query($sqlCmd);
@@ -293,7 +347,25 @@ if ($action === 'fetch_project_flow_data') {
         if ($cmd->fetch($objCmd->rowid) > 0) {
             foreach ($cmd->lines as $line) {
                 if ($line->product_type == 0) { // Only products
-                    $res['lines'][] = array('id' => $line->id, 'ref' => $line->ref, 'qty' => $line->qty, 'cmd_id' => $cmd->id, 'cmd_ref' => $cmd->ref);
+                    $shipped = 0;
+                    $exp_arr = isset($existing_exp[$line->id]) ? $existing_exp[$line->id] : array();
+                    foreach ($exp_arr as $e) $shipped += $e['qty'];
+                    
+                    $returned = 0;
+                    $ret_arr = isset($existing_ret[$line->id]) ? $existing_ret[$line->id] : array();
+                    foreach ($ret_arr as $r) $returned += $r['qty'];
+                    
+                    $res['lines'][] = array(
+                        'id' => $line->id,
+                        'ref' => $line->ref,
+                        'qty' => $line->qty,
+                        'cmd_id' => $cmd->id,
+                        'cmd_ref' => $cmd->ref,
+                        'shipped_qty' => $shipped,
+                        'returned_qty' => $returned,
+                        'existing_exp' => $exp_arr,
+                        'existing_ret' => $ret_arr
+                    );
                 }
             }
         }
@@ -3264,14 +3336,27 @@ function loadRentalFlowGrid(project_id) {
                     window.whRetOptionsGlobal = whRetOptions;
                     
                     data.lines.forEach(line => {
+                        let remainExp = line.qty - line.shipped_qty;
+                        let remainRet = line.shipped_qty - line.returned_qty;
+                        
                         // EXPEDITION (1 row)
                         html += '<tr class="oddeven" style="border-top:2px solid #ccc;">';
-                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span></td>';
+                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span><br><br><span style="font-size:0.85em; color:#2e7d32; white-space:nowrap;">Expédié: '+line.shipped_qty+' <br><b>(Reste: '+remainExp+')</b></span><br><br><span style="font-size:0.85em; color:#e65100; white-space:nowrap;">Retourné: '+line.returned_qty+' <br><b>(Reste: '+remainRet+')</b></span></td>';
                         html += '<td style="background:#eef7e6; color:#2e7d32; font-weight:bold; text-align:center; vertical-align:middle;">Expédition</td>';
                         html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em; font-weight:bold;">Répartition</td>';
                         months.forEach(m => {
                             html += '<td align="center" style="background:#f9fdf5; vertical-align:top; padding:5px; min-width:130px;">';
                             html += '<div id="blocks_exp_'+line.id+'_'+m.val+'">';
+                            
+                            // Existing expeditions
+                            if (line.existing_exp && line.existing_exp.length > 0) {
+                                line.existing_exp.forEach(e => {
+                                    if (e.month === m.val.substring(0, 7)) {
+                                        html += '<div style="font-size:0.8em; margin-bottom:5px; background:#e8f4f8; padding:3px; border-radius:2px; text-align:center;">'+e.url+' ('+e.qty+')</div>';
+                                    }
+                                });
+                            }
+                            
                             // Initial block 0
                             html += '<div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">';
                             html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px;">';
@@ -3295,6 +3380,16 @@ function loadRentalFlowGrid(project_id) {
                         months.forEach(m => {
                             html += '<td align="center" style="background:#fffcf5; vertical-align:top; padding:5px; min-width:130px;">';
                             html += '<div id="blocks_ret_'+line.id+'_'+m.val+'">';
+                            
+                            // Existing returns
+                            if (line.existing_ret && line.existing_ret.length > 0) {
+                                line.existing_ret.forEach(r => {
+                                    if (r.month === m.val.substring(0, 7)) {
+                                        html += '<div style="font-size:0.8em; margin-bottom:5px; background:#fce8e8; padding:3px; border-radius:2px; text-align:center;">'+r.url+' ('+r.qty+')</div>';
+                                    }
+                                });
+                            }
+                            
                             // Initial block 0
                             html += '<div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">';
                             html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px;">';
