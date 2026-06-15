@@ -3260,54 +3260,55 @@ function loadRentalFlowGrid(project_id) {
                     }
                     if(whExpOptions === '') whExpOptions = '<option value="0">Aucun</option>';
                     
+                    window.whExpOptionsGlobal = whExpOptions;
+                    window.whRetOptionsGlobal = whRetOptions;
+                    
                     data.lines.forEach(line => {
-                        // EXPEDITION (3 rows)
+                        // EXPEDITION (1 row)
                         html += '<tr class="oddeven" style="border-top:2px solid #ccc;">';
-                        html += '<td rowspan="6" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span></td>';
-                        html += '<td rowspan="3" style="background:#eef7e6; color:#2e7d32; font-weight:bold; text-align:center; vertical-align:middle;">Expédition</td>';
-                        html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em; font-weight:bold;">Quantité (%)</td>';
+                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span></td>';
+                        html += '<td style="background:#eef7e6; color:#2e7d32; font-weight:bold; text-align:center; vertical-align:middle;">Expédition</td>';
+                        html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em; font-weight:bold;">Répartition</td>';
                         months.forEach(m => {
-                            html += '<td align="center" style="background:#f9fdf5;"><input type="number" min="0" max="100" class="flat grid-input-exp-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_exp_pct['+line.id+']['+m.val+']" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'exp\')"> <span style="font-size:0.8em; color:#888;">%</span></td>';
+                            html += '<td align="center" style="background:#f9fdf5; vertical-align:top; padding:5px; min-width:130px;">';
+                            html += '<div id="blocks_exp_'+line.id+'_'+m.val+'">';
+                            // Initial block 0
+                            html += '<div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">';
+                            html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px;">';
+                            html += '<div><input type="number" min="0" max="100" class="flat grid-input-exp-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_exp['+line.id+']['+m.val+'][0][pct]" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'exp\')"> <span style="font-size:0.8em; color:#888;">%</span></div>';
+                            html += '<button type="button" onclick="this.closest(\'.flow-block\').remove(); updateGridTot(null, '+line.id+', \'exp\')" style="border:none;background:none;color:red;cursor:pointer;padding:0;" title="Supprimer"><i class="fa fa-times"></i></button>';
+                            html += '</div>';
+                            html += '<input type="date" name="grid_exp['+line.id+']['+m.val+'][0][date]" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-exp-date" data-line="'+line.id+'" style="width:100%; margin-bottom:3px; font-size:0.85em; box-sizing:border-box;">';
+                            html += '<select name="grid_exp['+line.id+']['+m.val+'][0][wh]" class="flat grid-input-exp-wh" data-line="'+line.id+'" style="width:100%; font-size:0.85em; box-sizing:border-box;">'+whExpOptions+'</select>';
+                            html += '</div>';
+                            html += '</div>';
+                            html += '<button type="button" class="button" onclick="addBlock(\'exp\', '+line.id+', \''+m.val+'\', \''+m.val+'\', \''+m.end+'\')" style="width:100%; padding:2px; font-size:0.8em; margin-top:3px;"><i class="fa fa-plus"></i> Ajouter</button>';
+                            html += '</td>';
                         });
-                        html += '<td rowspan="3" align="center" style="background:#f9fdf5; vertical-align:middle;"><strong id="tot_exp_'+line.id+'">0%</strong></td>';
+                        html += '<td align="center" style="background:#f9fdf5; vertical-align:middle;"><strong id="tot_exp_'+line.id+'">0%</strong></td>';
                         html += '</tr>';
                         
-                        html += '<tr class="oddeven">';
-                        html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em;"><i class="fa fa-calendar"></i> Date</td>';
-                        months.forEach(m => {
-                            html += '<td align="center" style="background:#f9fdf5;"><input type="date" name="grid_exp_date['+line.id+']['+m.val+']" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-exp-date" data-line="'+line.id+'" style="width:105px; font-size:0.85em;"></td>';
-                        });
-                        html += '</tr>';
-                        
-                        html += '<tr class="oddeven">';
-                        html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em;"><i class="fa fa-truck"></i> Entrepôt</td>';
-                        months.forEach(m => {
-                            html += '<td align="center" style="background:#f9fdf5;"><select name="grid_exp_wh['+line.id+']['+m.val+']" class="flat grid-input-exp-wh" data-line="'+line.id+'" style="max-width:110px; font-size:0.85em;">'+whExpOptions+'</select></td>';
-                        });
-                        html += '</tr>';
-                        
-                        // RETOUR (3 rows)
+                        // RETOUR (1 row)
                         html += '<tr class="oddeven" style="border-top:1px dashed #ccc;">';
-                        html += '<td rowspan="3" style="background:#fff4e6; color:#e65100; font-weight:bold; text-align:center; vertical-align:middle;">Retour</td>';
-                        html += '<td style="background:#fff4e6; text-align:center; font-size:0.85em; font-weight:bold;">Quantité (%)</td>';
+                        html += '<td style="background:#fff4e6; color:#e65100; font-weight:bold; text-align:center; vertical-align:middle;">Retour</td>';
+                        html += '<td style="background:#fff4e6; text-align:center; font-size:0.85em; font-weight:bold;">Répartition</td>';
                         months.forEach(m => {
-                            html += '<td align="center" style="background:#fffcf5;"><input type="number" min="0" max="100" class="flat grid-input-ret-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_ret_pct['+line.id+']['+m.val+']" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'ret\')"> <span style="font-size:0.8em; color:#888;">%</span></td>';
+                            html += '<td align="center" style="background:#fffcf5; vertical-align:top; padding:5px; min-width:130px;">';
+                            html += '<div id="blocks_ret_'+line.id+'_'+m.val+'">';
+                            // Initial block 0
+                            html += '<div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">';
+                            html += '<div style="display:flex; justify-content:space-between; margin-bottom:3px;">';
+                            html += '<div><input type="number" min="0" max="100" class="flat grid-input-ret-pct" data-col="'+m.val+'" data-line="'+line.id+'" name="grid_ret['+line.id+']['+m.val+'][0][pct]" value="0" style="width:45px; text-align:center;" onchange="updateGridTot(this, '+line.id+', \'ret\')"> <span style="font-size:0.8em; color:#888;">%</span></div>';
+                            html += '<button type="button" onclick="this.closest(\'.flow-block\').remove(); updateGridTot(null, '+line.id+', \'ret\')" style="border:none;background:none;color:red;cursor:pointer;padding:0;" title="Supprimer"><i class="fa fa-times"></i></button>';
+                            html += '</div>';
+                            html += '<input type="date" name="grid_ret['+line.id+']['+m.val+'][0][date]" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-ret-date" data-line="'+line.id+'" style="width:100%; margin-bottom:3px; font-size:0.85em; box-sizing:border-box;">';
+                            html += '<select name="grid_ret['+line.id+']['+m.val+'][0][wh]" class="flat grid-input-ret-wh" data-line="'+line.id+'" style="width:100%; font-size:0.85em; box-sizing:border-box;">'+whRetOptions+'</select>';
+                            html += '</div>';
+                            html += '</div>';
+                            html += '<button type="button" class="button" onclick="addBlock(\'ret\', '+line.id+', \''+m.val+'\', \''+m.val+'\', \''+m.end+'\')" style="width:100%; padding:2px; font-size:0.8em; margin-top:3px;"><i class="fa fa-plus"></i> Ajouter</button>';
+                            html += '</td>';
                         });
-                        html += '<td rowspan="3" align="center" style="background:#fffcf5; vertical-align:middle;"><strong id="tot_ret_'+line.id+'">0%</strong></td>';
-                        html += '</tr>';
-                        
-                        html += '<tr class="oddeven">';
-                        html += '<td style="background:#fff4e6; text-align:center; font-size:0.85em;"><i class="fa fa-calendar"></i> Date</td>';
-                        months.forEach(m => {
-                            html += '<td align="center" style="background:#fffcf5;"><input type="date" name="grid_ret_date['+line.id+']['+m.val+']" min="'+m.val+'" max="'+m.end+'" class="flat grid-input-ret-date" data-line="'+line.id+'" style="width:105px; font-size:0.85em;"></td>';
-                        });
-                        html += '</tr>';
-                        
-                        html += '<tr class="oddeven">';
-                        html += '<td style="background:#fff4e6; text-align:center; font-size:0.85em;"><i class="fa fa-truck"></i> Entrepôt</td>';
-                        months.forEach(m => {
-                            html += '<td align="center" style="background:#fffcf5;"><select name="grid_ret_wh['+line.id+']['+m.val+']" class="flat grid-input-ret-wh" data-line="'+line.id+'" style="max-width:110px; font-size:0.85em;">'+whRetOptions+'</select></td>';
-                        });
+                        html += '<td align="center" style="background:#fffcf5; vertical-align:middle;"><strong id="tot_ret_'+line.id+'">0%</strong></td>';
                         html += '</tr>';
                     });
                     
@@ -3344,15 +3345,40 @@ function loadRentalFlowGrid(project_id) {
                 }
             }
             
+            let blockIndexCounter = 100;
+            function addBlock(type, lineId, colDate, minDate, maxDate) {
+                let container = document.getElementById('blocks_' + type + '_' + lineId + '_' + colDate);
+                let optionsHtml = type === 'exp' ? window.whExpOptionsGlobal : window.whRetOptionsGlobal;
+                let html = `
+                <div class="flow-block" style="border:1px solid #ddd; background:#fff; padding:5px; border-radius:3px; margin-bottom:5px; position:relative;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+                        <div><input type="number" min="0" max="100" name="grid_${type}[${lineId}][${colDate}][${blockIndexCounter}][pct]" value="0" style="width:45px; text-align:center;" class="flat grid-input-${type}-pct" data-col="${colDate}" data-line="${lineId}" onchange="updateGridTot(this, ${lineId}, '${type}')"> <span style="font-size:0.8em; color:#888;">%</span></div>
+                        <button type="button" onclick="this.closest('.flow-block').remove(); updateGridTot(null, ${lineId}, '${type}')" style="border:none;background:none;color:red;cursor:pointer;padding:0;" title="Supprimer"><i class="fa fa-times"></i></button>
+                    </div>
+                    <input type="date" name="grid_${type}[${lineId}][${colDate}][${blockIndexCounter}][date]" min="${minDate}" max="${maxDate}" class="flat grid-input-${type}-date" data-line="${lineId}" style="width:100%; margin-bottom:3px; font-size:0.85em; box-sizing:border-box;">
+                    <select name="grid_${type}[${lineId}][${colDate}][${blockIndexCounter}][wh]" class="flat grid-input-${type}-wh" data-line="${lineId}" style="width:100%; font-size:0.85em; box-sizing:border-box;">${optionsHtml}</select>
+                </div>`;
+                container.insertAdjacentHTML('beforeend', html);
+                blockIndexCounter++;
+            }
+            
             function updateGridTot(input, lineId, type) {
                 let inputs = document.querySelectorAll('input.grid-input-'+type+'-pct[data-line="'+lineId+'"]');
                 let sum = 0; inputs.forEach(i => sum += parseInt(i.value || 0));
                 let totEl = document.getElementById('tot_'+type+'_'+lineId);
-                totEl.innerHTML = sum + '%';
-                if (sum < 100) totEl.style.color = 'orange'; else if (sum > 100) totEl.style.color = 'red'; else totEl.style.color = 'green';
+                if (totEl) {
+                    totEl.innerHTML = sum + '%';
+                    if (sum < 100) totEl.style.color = 'orange'; else if (sum > 100) totEl.style.color = 'red'; else totEl.style.color = 'green';
+                }
             }
             
             function randomizeFlowGrid(startDate) {
+                // Keep only one block per cell to avoid multiplying them randomly
+                document.querySelectorAll('.flow-block').forEach(b => {
+                    let container = b.parentElement;
+                    if (container.children[0] !== b) b.remove();
+                });
+                
                 let inputsExpPct = document.querySelectorAll('input.grid-input-exp-pct');
                 let inputsRetPct = document.querySelectorAll('input.grid-input-ret-pct');
                 
@@ -3369,27 +3395,28 @@ function loadRentalFlowGrid(project_id) {
                     let totExp = 100;
                     let totRet = 100;
                     
-                    while(totExp > 0) {
+                    while(totExp > 0 && arrExp.length > 0) {
                         let idx = Math.floor(Math.random() * Math.min(3, arrExp.length));
                         let val = parseInt(arrExp[idx].value || 0);
                         let add = Math.min(totExp, Math.floor(Math.random() * 20) + 10);
                         arrExp[idx].value = val + add;
                         totExp -= add;
                     }
-                    if(totExp < 0) { arrExp[0].value = parseInt(arrExp[0].value) + totExp; }
+                    if(totExp < 0 && arrExp.length > 0) { arrExp[0].value = parseInt(arrExp[0].value) + totExp; }
                     
-                    while(totRet > 0) {
+                    while(totRet > 0 && arrRet.length > 0) {
                         let idx = Math.floor(Math.random() * 4) + (arrRet.length - 4);
                         if(idx >= arrRet.length) idx = arrRet.length - 1;
+                        if(idx < 0) idx = 0;
                         let val = parseInt(arrRet[idx].value || 0);
                         let add = Math.min(totRet, Math.floor(Math.random() * 30) + 20);
                         arrRet[idx].value = val + add;
                         totRet -= add;
                     }
-                    if(totRet < 0) { arrRet[arrRet.length-1].value = parseInt(arrRet[arrRet.length-1].value) + totRet; }
+                    if(totRet < 0 && arrRet.length > 0) { arrRet[arrRet.length-1].value = parseInt(arrRet[arrRet.length-1].value) + totRet; }
                     
-                    updateGridTot(arrExp[0], id, 'exp');
-                    updateGridTot(arrRet[0], id, 'ret');
+                    if(arrExp.length > 0) updateGridTot(arrExp[0], id, 'exp');
+                    if(arrRet.length > 0) updateGridTot(arrRet[0], id, 'ret');
                 }
                 
                 // Pré-remplir les dates et entrepôts pour les mois où il y a un pourcentage
@@ -3397,13 +3424,13 @@ function loadRentalFlowGrid(project_id) {
                 ['exp', 'ret'].forEach(type => {
                     document.querySelectorAll('input.grid-input-'+type+'-pct').forEach(inp => {
                         let val = parseInt(inp.value || 0);
-                        let m = inp.getAttribute('data-col');
-                        let lineId = inp.getAttribute('data-line');
-                        let dateInp = document.querySelector('input[name="grid_'+type+'_date['+lineId+']['+m+']"]');
-                        let whSel = document.querySelector('select[name="grid_'+type+'_wh['+lineId+']['+m+']"]');
                         if (val > 0) {
+                            let block = inp.closest('.flow-block');
+                            let m = inp.getAttribute('data-col');
+                            let dateInp = block.querySelector('.grid-input-'+type+'-date');
+                            let whSel = block.querySelector('.grid-input-'+type+'-wh');
+                            
                             if(dateInp && !dateInp.value) {
-                                // Calculate target date keeping the same day if possible, bounded by the month
                                 let dayStr = startDate.split('-')[2];
                                 let yearStr = m.substring(0, 4);
                                 let monthStr = m.substring(5, 7);
@@ -3418,20 +3445,22 @@ function loadRentalFlowGrid(project_id) {
                                 if (type === 'exp' && globalDefExpWh && globalDefExpWh.value) {
                                     whSel.value = globalDefExpWh.value;
                                 } else {
-                                    // Default to first valid warehouse
                                     for(let i=0; i<whSel.options.length; i++) {
                                         if(whSel.options[i].value !== "0") { whSel.selectedIndex = i; break; }
                                     }
                                 }
                             }
-                        } else {
-                            if(dateInp) dateInp.value = '';
                         }
                     });
                 });
             }
 
             function resetFlowGrid() {
+                // Keep only one block per cell
+                document.querySelectorAll('.flow-block').forEach(b => {
+                    let container = b.parentElement;
+                    if (container.children[0] !== b) b.remove();
+                });
                 document.querySelectorAll('input[type="number"]').forEach(i => { i.value = 0; i.dispatchEvent(new Event('change')); });
                 document.querySelectorAll('input[type="date"]').forEach(i => i.value = '');
             }
