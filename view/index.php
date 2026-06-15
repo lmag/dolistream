@@ -1489,7 +1489,7 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 				$r = $exp->create($fuser);
 				if ($r > 0) {
 					$exp->valid($fuser);
-					dsLog('✔ Expédition créée pour ' . dol_print_date($mdate, 'day') . ' (Entrepôt ID: '.$wh_id.') | Cmd: ' . $cmd->ref, 'success');
+					dsLog('✔ Expédition ' . $exp->ref . ' créée pour ' . dol_print_date($mdate, 'day') . ' (Entrepôt ID: '.$wh_id.') | Cmd: ' . $cmd->ref, 'success');
 					$ok++;
 					$createdObjects[] = array(
 					    'type' => 'exp',
@@ -1526,7 +1526,7 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 				        $pr->addline($wh_id, $l['line']->id, $l['line']->fk_product, $l['qty'], $l['qty'], $l['qty'], array(), '', false);
 				    }
 				    $pr->valid($fuser);
-					dsLog('✔ Retour créé pour ' . dol_print_date($mdate, 'day') . ' | Cmd: ' . $cmd->ref . ' | Entrepôt: ' . $wh_id, 'success');
+					dsLog('✔ Retour ' . $pr->ref . ' créé pour ' . dol_print_date($mdate, 'day') . ' | Cmd: ' . $cmd->ref . ' | Entrepôt: ' . $wh_id, 'success');
 					$ok++;
 					$createdObjects[] = array(
 					    'type' => 'ret',
@@ -3641,7 +3641,8 @@ function loadRentalFlowGrid(project_id) {
                             let container = document.getElementById('blocks_'+obj.type+'_'+obj.line_id+'_'+obj.col);
                             if (container) {
                                 let a = document.createElement('div');
-                                a.innerHTML = '<a href="'+obj.url+'" target="_blank" style="font-size:0.8em;display:block;margin-top:2px;background:#e8f4f8;padding:3px;border-radius:2px;text-align:center;"><i class="fa fa-external-link-alt"></i> '+ (obj.type === 'exp' ? 'Expédition' : 'Retour') +'</a>';
+                                let color = obj.type === 'exp' ? '#e8f4f8' : '#fce8e8';
+                                a.innerHTML = '<div style="font-size:0.8em; margin-top:2px; background:'+color+'; padding:3px; border-radius:2px; text-align:center;">' + obj.url + ' <i class="fa fa-check text-success"></i> ' + (obj.type === 'exp' ? 'Expédition' : 'Retour') + '</div>';
                                 container.appendChild(a);
                             }
                         });
