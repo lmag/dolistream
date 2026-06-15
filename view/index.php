@@ -307,6 +307,7 @@ if ($action === 'fetch_project_flow_data') {
                 'ref' => $obj->ref,
                 'qty' => $obj->qty,
                 'month' => $month,
+                'date' => dol_print_date($db->jdate($date), 'day'),
                 'url' => $tmpExp->getNomUrl(1)
             );
         }
@@ -334,6 +335,7 @@ if ($action === 'fetch_project_flow_data') {
                 'ref' => $obj->ref,
                 'qty' => $obj->qty,
                 'month' => $month,
+                'date' => dol_print_date($db->jdate($date), 'day'),
                 'url' => $tmpRet->getNomUrl(1)
             );
         }
@@ -361,7 +363,6 @@ if ($action === 'fetch_project_flow_data') {
                         'qty' => $line->qty,
                         'cmd_id' => $cmd->id,
                         'cmd_ref' => $cmd->ref,
-                        'date_start' => $line->date_start ? dol_print_date($line->date_start, 'day') : '',
                         'shipped_qty' => $shipped,
                         'returned_qty' => $returned,
                         'existing_exp' => $exp_arr,
@@ -3341,11 +3342,10 @@ function loadRentalFlowGrid(project_id) {
                     data.lines.forEach(line => {
                         let remainExp = line.qty - line.shipped_qty;
                         let remainRet = line.shipped_qty - line.returned_qty;
-                        let dateStartHtml = line.date_start ? '<br><span style="font-size:0.85em; color:#1976d2;"><i class="fa fa-calendar"></i> Début loc: '+line.date_start+'</span>' : '';
                         
                         // EXPEDITION (1 row)
                         html += '<tr class="oddeven" style="border-top:2px solid #ccc;">';
-                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span>'+dateStartHtml+'<br><br><span style="font-size:0.85em; color:#2e7d32; white-space:nowrap;">Expédié: '+line.shipped_qty+' <br><b>(Reste: '+remainExp+')</b></span><br><br><span style="font-size:0.85em; color:#e65100; white-space:nowrap;">Retourné: '+line.returned_qty+' <br><b>(Reste: '+remainRet+')</b></span></td>';
+                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span><br><br><span style="font-size:0.85em; color:#2e7d32; white-space:nowrap;">Expédié: '+line.shipped_qty+' <br><b>(Reste: '+remainExp+')</b></span><br><br><span style="font-size:0.85em; color:#e65100; white-space:nowrap;">Retourné: '+line.returned_qty+' <br><b>(Reste: '+remainRet+')</b></span></td>';
                         html += '<td style="background:#eef7e6; color:#2e7d32; font-weight:bold; text-align:center; vertical-align:middle;">Expédition</td>';
                         html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em; font-weight:bold;">Répartition</td>';
                         months.forEach(m => {
@@ -3356,7 +3356,7 @@ function loadRentalFlowGrid(project_id) {
                             if (line.existing_exp && line.existing_exp.length > 0) {
                                 line.existing_exp.forEach(e => {
                                     if (e.month === m.val.substring(0, 7)) {
-                                        html += '<div style="font-size:0.8em; margin-bottom:5px; background:#e8f4f8; padding:3px; border-radius:2px; text-align:center;">'+e.url+' ('+e.qty+')</div>';
+                                        html += '<div style="font-size:0.8em; margin-bottom:5px; background:#e8f4f8; padding:3px; border-radius:2px; text-align:center;">'+e.url+' ('+e.qty+')<br><span style="color:#666;"><i class="fa fa-calendar"></i> '+e.date+'</span></div>';
                                     }
                                 });
                             }
@@ -3390,7 +3390,7 @@ function loadRentalFlowGrid(project_id) {
                             if (line.existing_ret && line.existing_ret.length > 0) {
                                 line.existing_ret.forEach(r => {
                                     if (r.month === m.val.substring(0, 7)) {
-                                        html += '<div style="font-size:0.8em; margin-bottom:5px; background:#fce8e8; padding:3px; border-radius:2px; text-align:center;">'+r.url+' ('+r.qty+')</div>';
+                                        html += '<div style="font-size:0.8em; margin-bottom:5px; background:#fce8e8; padding:3px; border-radius:2px; text-align:center;">'+r.url+' ('+r.qty+')<br><span style="color:#666;"><i class="fa fa-calendar"></i> '+r.date+'</span></div>';
                                     }
                                 });
                             }
