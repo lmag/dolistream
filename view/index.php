@@ -1303,13 +1303,10 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 		}
 		
 		$fk_project = GETPOST('fk_project', 'int');
-		$grid_exp_pct = GETPOST('grid_exp_pct', 'array');
-		$grid_exp_date = GETPOST('grid_exp_date', 'array');
-		$grid_exp_wh = GETPOST('grid_exp_wh', 'array');
-		$grid_ret_pct = GETPOST('grid_ret_pct', 'array');
-		$grid_ret_date = GETPOST('grid_ret_date', 'array');
-		$grid_ret_wh = GETPOST('grid_ret_wh', 'array');
+		$grid_exp = GETPOST('grid_exp', 'array');
+		$grid_ret = GETPOST('grid_ret', 'array');
 		$gen_rec = GETPOST('gen_recurring_invoices', 'int');
+		$ajax_run = GETPOST('ajax_run', 'int');
 		
 		if ($fk_project <= 0) { dsLog('❌ Projet de location requis.', 'error'); goto render; }
 		
@@ -1346,45 +1343,50 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 			}
 		}
 		
-		if (is_array($grid_exp_pct)) {
-		    foreach($grid_exp_pct as $line_id => $months) {
+		if (is_array($grid_exp)) {
+		    foreach($grid_exp as $line_id => $months) {
 		        if (isset($orders_lines[$line_id])) {
 		            $lineData = $orders_lines[$line_id];
 		            $qty_total = $lineData['line']->qty;
-		            foreach($months as $month_str => $pct) {
-		                $pct = (float)$pct;
-		                if ($pct > 0) {
-		                    $qty_to_ship = max(1, round(($qty_total * $pct) / 100));
-                            $date_str = !empty($grid_exp_date[$line_id][$month_str]) ? $grid_exp_date[$line_id][$month_str] : $month_str . '-01';
-                            $wh_id = !empty($grid_exp_wh[$line_id][$month_str]) ? (int)$grid_exp_wh[$line_id][$month_str] : 1;
-                            $group_key = $date_str . '|' . $wh_id;
-		                    $expeditions_by_group[$group_key][$lineData['cmd']->id][] = array('line' => $lineData['line'], 'qty' => $qty_to_ship, 'cmd' => $lineData['cmd'], 'date' => $date_str, 'wh_id' => $wh_id);
-		                }
+		            foreach($months as $month_str => $blocks) {
+		                foreach($blocks as $idx => $b) {
+                            $pct = (float)($b['pct'] ?? 0);
+                            if ($pct > 0) {
+                                $qty_to_ship = max(1, round(($qty_total * $pct) / 100));
+                                $date_str = !empty($b['date']) ? $b['date'] : $month_str . '-01';
+                                $wh_id = !empty($b['wh']) ? (int)$b['wh'] : 1;
+                                $group_key = $date_str . '|' . $wh_id;
+                                $expeditions_by_group[$group_key][$lineData['cmd']->id][] = array('line' => $lineData['line'], 'qty' => $qty_to_ship, 'cmd' => $lineData['cmd'], 'date' => $date_str, 'wh_id' => $wh_id, 'col' => $month_str);
+                            }
+                        }
 		            }
 		        }
 		    }
 		}
 		
-		if (is_array($grid_ret_pct)) {
-		    foreach($grid_ret_pct as $line_id => $months) {
+		if (is_array($grid_ret)) {
+		    foreach($grid_ret as $line_id => $months) {
 		        if (isset($orders_lines[$line_id])) {
 		            $lineData = $orders_lines[$line_id];
 		            $qty_total = $lineData['line']->qty;
-		            foreach($months as $month_str => $pct) {
-		                $pct = (float)$pct;
-		                if ($pct > 0) {
-		                    $qty_to_ret = max(1, round(($qty_total * $pct) / 100));
-                            $date_str = !empty($grid_ret_date[$line_id][$month_str]) ? $grid_ret_date[$line_id][$month_str] : $month_str . '-01';
-                            $wh_id = !empty($grid_ret_wh[$line_id][$month_str]) ? (int)$grid_ret_wh[$line_id][$month_str] : 1;
-                            $group_key = $date_str . '|' . $wh_id;
-		                    $returns_by_group[$group_key][$lineData['cmd']->id][] = array('line' => $lineData['line'], 'qty' => $qty_to_ret, 'cmd' => $lineData['cmd'], 'date' => $date_str, 'wh_id' => $wh_id);
-		                }
+		            foreach($months as $month_str => $blocks) {
+		                foreach($blocks as $idx => $b) {
+                            $pct = (float)($b['pct'] ?? 0);
+                            if ($pct > 0) {
+                                $qty_to_ret = max(1, round(($qty_total * $pct) / 100));
+                                $date_str = !empty($b['date']) ? $b['date'] : $month_str . '-01';
+                                $wh_id = !empty($b['wh']) ? (int)$b['wh'] : 1;
+                                $group_key = $date_str . '|' . $wh_id;
+                                $returns_by_group[$group_key][$lineData['cmd']->id][] = array('line' => $lineData['line'], 'qty' => $qty_to_ret, 'cmd' => $lineData['cmd'], 'date' => $date_str, 'wh_id' => $wh_id, 'col' => $month_str);
+                            }
+                        }
 		            }
 		        }
 		    }
 		}
 		
 		$ok = 0; $ko = 0;
+		$createdObjects = array();
 		
 		foreach($expeditions_by_group as $group_key => $cmds) {
 		    foreach($cmds as $cmd_id => $linesToShip) {
@@ -1413,6 +1415,12 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 					$exp->valid($fuser);
 					dsLog('✔ Expédition créée pour ' . dol_print_date($mdate, 'day') . ' (Entrepôt ID: '.$wh_id.') | Cmd: ' . $cmd->ref, 'success');
 					$ok++;
+					$createdObjects[] = array(
+					    'type' => 'exp',
+					    'col' => $linesToShip[0]['col'],
+					    'line_id' => $linesToShip[0]['line']->id, // use first line id to find the container cell
+					    'url' => $exp->getNomUrl(1)
+					);
 				} else {
 				    dsLog('✘ Erreur expédition: ' . $exp->error, 'error');
 					$ko++;
@@ -1444,6 +1452,12 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 				    $pr->valid($fuser);
 					dsLog('✔ Retour créé pour ' . dol_print_date($mdate, 'day') . ' | Cmd: ' . $cmd->ref . ' | Entrepôt: ' . $wh_id, 'success');
 					$ok++;
+					$createdObjects[] = array(
+					    'type' => 'ret',
+					    'col' => $linesToRet[0]['col'],
+					    'line_id' => $linesToRet[0]['line']->id,
+					    'url' => $pr->getNomUrl(1)
+					);
 				} else {
 				    dsLog('✘ Erreur retour: ' . $pr->error, 'error');
 					$ko++;
@@ -1459,6 +1473,18 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 		}
 		
 		dsLog('─── ' . $ok . ' opérations créées, ' . $ko . ' erreur(s) ───');
+
+		if ($ajax_run) {
+		    // Prepare logs for JSON
+		    $jsonLogs = array();
+		    foreach($scriptLog as $l) {
+		        $clsMap = array('success'=>'ds-log-s', 'error'=>'ds-log-e', 'warn'=>'ds-log-w', 'info'=>'ds-log-i');
+		        $jsonLogs[] = array('time'=>$l['time'], 'cls'=>($clsMap[$l['level']]??'ds-log-i'), 'msg'=>$l['msg']);
+		    }
+		    header('Content-Type: application/json');
+		    echo json_encode(array('logs' => $jsonLogs, 'created' => $createdObjects));
+		    exit;
+		}
 
 	} elseif ($script === 'workflow-opp-cl-pr') {
 	// ════════════════════════════════════════════════════════════════════════
@@ -3306,6 +3332,9 @@ function loadRentalFlowGrid(project_id) {
                     html += '<div style="margin-top:15px; display:flex; gap:10px;">';
                     html += '<button type="button" class="button" onclick="randomizeFlowGrid(\''+data.start_date+'\')"><i class="fa fa-magic"></i> Répartir Aléatoirement</button>';
                     html += '<button type="button" class="button" onclick="resetFlowGrid()"><i class="fa fa-trash"></i> Effacer la grille</button>';
+                    html += '<button type="button" class="button" onclick="exportScenario()" style="margin-left:auto;"><i class="fa fa-download"></i> Exporter JSON</button>';
+                    html += '<button type="button" class="button" onclick="document.getElementById(\'import-json-file\').click()"><i class="fa fa-upload"></i> Importer JSON</button>';
+                    html += '<input type="file" id="import-json-file" accept=".json" style="display:none;" onchange="importScenario(event)">';
                     html += '</div>';
                     
                     document.getElementById('rental_grid_container').innerHTML = html;
@@ -3414,8 +3443,130 @@ function loadRentalFlowGrid(project_id) {
                         inp.value = 0;
                     }
                 });
-                // Soumettre le formulaire
-                document.getElementById('ds-run-form').submit();
+                executeRentalWorkflow();
+            }
+
+            function executeRentalWorkflow() {
+                let form = document.getElementById('ds-run-form');
+                let fd = new FormData(form);
+                fd.append('ajax_run', '1');
+                
+                // Spinner
+                let ring = document.getElementById('ds-ring');
+                let circle = document.getElementById('ds-ring-circle');
+                if (ring) { ring.style.visibility = 'visible'; circle.style.animationPlayState = 'running'; }
+                
+                let cb = document.getElementById('ds-cb');
+                if (cb) { cb.style.display = 'block'; cb.innerHTML = ''; }
+                
+                fetch(form.action, { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(data => {
+                    if (ring) { ring.style.visibility = 'hidden'; circle.style.animationPlayState = 'paused'; }
+                    
+                    if (data.created) {
+                        data.created.forEach(obj => {
+                            let container = document.getElementById('blocks_'+obj.type+'_'+obj.line_id+'_'+obj.col);
+                            if (container) {
+                                let a = document.createElement('div');
+                                a.innerHTML = '<a href="'+obj.url+'" target="_blank" style="font-size:0.8em;display:block;margin-top:2px;background:#e8f4f8;padding:3px;border-radius:2px;text-align:center;"><i class="fa fa-external-link-alt"></i> '+ (obj.type === 'exp' ? 'Expédition' : 'Retour') +'</a>';
+                                container.appendChild(a);
+                            }
+                        });
+                    }
+                    if (data.logs) {
+                        if (cb) {
+                            data.logs.forEach(l => {
+                                let line = document.createElement('div');
+                                line.className = 'ds-log-line';
+                                line.innerHTML = '<span class="ds-log-time">'+(l.time||'')+'</span> <span class="'+(l.cls||'ds-log-i')+'">'+(l.msg||'')+'</span>';
+                                cb.appendChild(line);
+                            });
+                            cb.scrollTop = cb.scrollHeight;
+                        }
+                    }
+                })
+                .catch(e => {
+                    if (ring) { ring.style.visibility = 'hidden'; circle.style.animationPlayState = 'paused'; }
+                    alert("Erreur: " + e);
+                });
+            }
+
+            function exportScenario() {
+                let form = document.getElementById('ds-run-form');
+                let fd = new FormData(form);
+                let scenario = { exp: {}, ret: {} };
+                for (let [key, value] of fd.entries()) {
+                    let m = key.match(/grid_(exp|ret)\[(\d+)\]\[([^\]]+)\]\[(\d+)\]\[(pct|date|wh)\]/);
+                    if (m) {
+                        let type = m[1], lineId = m[2], month = m[3], idx = m[4], field = m[5];
+                        if (!scenario[type][lineId]) scenario[type][lineId] = {};
+                        if (!scenario[type][lineId][month]) scenario[type][lineId][month] = {};
+                        if (!scenario[type][lineId][month][idx]) scenario[type][lineId][month][idx] = {};
+                        scenario[type][lineId][month][idx][field] = value;
+                    }
+                }
+                for (let type in scenario) {
+                    for (let lineId in scenario[type]) {
+                        for (let month in scenario[type][lineId]) {
+                            let blocks = scenario[type][lineId][month];
+                            for (let idx in blocks) {
+                                if (!blocks[idx].pct || parseInt(blocks[idx].pct) === 0) {
+                                    delete blocks[idx];
+                                }
+                            }
+                            if (Object.keys(blocks).length === 0) delete scenario[type][lineId][month];
+                        }
+                        if (Object.keys(scenario[type][lineId]).length === 0) delete scenario[type][lineId];
+                    }
+                }
+                let blob = new Blob([JSON.stringify(scenario, null, 2)], {type: 'application/json'});
+                let url = URL.createObjectURL(blob);
+                let a = document.createElement('a');
+                a.href = url;
+                a.download = 'scenario_location_' + new Date().getTime() + '.json';
+                a.click();
+            }
+
+            function importScenario(event) {
+                let file = event.target.files[0];
+                if (!file) return;
+                let reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        let scenario = JSON.parse(e.target.result);
+                        resetFlowGrid();
+                        for (let type in scenario) {
+                            for (let lineId in scenario[type]) {
+                                for (let month in scenario[type][lineId]) {
+                                    let blocks = scenario[type][lineId][month];
+                                    let container = document.getElementById('blocks_'+type+'_'+lineId+'_'+month);
+                                    if (!container) continue;
+                                    container.innerHTML = '';
+                                    let bKeys = Object.keys(blocks);
+                                    for (let i=0; i<bKeys.length; i++) {
+                                        let bData = blocks[bKeys[i]];
+                                        addBlock(type, lineId, month, month+'-01', month+'-31');
+                                        let newIdx = blockIndexCounter - 1;
+                                        let pctInp = document.getElementsByName('grid_'+type+'['+lineId+']['+month+']['+newIdx+'][pct]')[0];
+                                        let dateInp = document.getElementsByName('grid_'+type+'['+lineId+']['+month+']['+newIdx+'][date]')[0];
+                                        let whInp = document.getElementsByName('grid_'+type+'['+lineId+']['+month+']['+newIdx+'][wh]')[0];
+                                        if (pctInp) { pctInp.value = bData.pct; updateGridTot(pctInp, lineId, type); }
+                                        if (dateInp && bData.date) dateInp.value = bData.date;
+                                        if (whInp && bData.wh) whInp.value = bData.wh;
+                                    }
+                                    if (bKeys.length === 0) {
+                                        addBlock(type, lineId, month, month+'-01', month+'-31');
+                                    }
+                                }
+                            }
+                        }
+                    } catch(err) {
+                        alert("Erreur JSON: " + err);
+                    }
+                    event.target.value = '';
+                };
+                reader.readAsText(file);
             }
                     </script>
           </div><div style="display:none"><label>
