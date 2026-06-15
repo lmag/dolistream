@@ -1491,12 +1491,16 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 					$exp->valid($fuser);
 					dsLog('✔ Expédition ' . $exp->ref . ' créée pour ' . dol_print_date($mdate, 'day') . ' (Entrepôt ID: '.$wh_id.') | Cmd: ' . $cmd->ref, 'success');
 					$ok++;
-					$createdObjects[] = array(
-					    'type' => 'exp',
-					    'col' => $linesToShip[0]['col'],
-					    'line_id' => $linesToShip[0]['line']->id, // use first line id to find the container cell
-					    'url' => $exp->getNomUrl(1)
-					);
+                    foreach ($linesToShip as $l) {
+                        $createdObjects[] = array(
+                            'type' => 'exp',
+                            'col' => $l['col'],
+                            'line_id' => $l['line']->id,
+                            'qty' => $l['qty'],
+                            'date' => dol_print_date($mdate, 'day'),
+                            'url' => $exp->getNomUrl(1)
+                        );
+                    }
 				} else {
 				    dsLog('✘ Erreur expédition: ' . $exp->error, 'error');
 					$ko++;
@@ -1528,12 +1532,16 @@ if ($action === 'run' && !empty($script) && (int) GETPOST('token_check') >= 0) {
 				    $pr->valid($fuser);
 					dsLog('✔ Retour ' . $pr->ref . ' créé pour ' . dol_print_date($mdate, 'day') . ' | Cmd: ' . $cmd->ref . ' | Entrepôt: ' . $wh_id, 'success');
 					$ok++;
-					$createdObjects[] = array(
-					    'type' => 'ret',
-					    'col' => $linesToRet[0]['col'],
-					    'line_id' => $linesToRet[0]['line']->id,
-					    'url' => $pr->getNomUrl(1)
-					);
+                    foreach ($linesToRet as $l) {
+                        $createdObjects[] = array(
+                            'type' => 'ret',
+                            'col' => $l['col'],
+                            'line_id' => $l['line']->id,
+                            'qty' => $l['qty'],
+                            'date' => dol_print_date($mdate, 'day'),
+                            'url' => $pr->getNomUrl(1)
+                        );
+                    }
 				} else {
 				    dsLog('✘ Erreur retour: ' . $pr->error, 'error');
 					$ko++;
@@ -3642,7 +3650,7 @@ function loadRentalFlowGrid(project_id) {
                             if (container) {
                                 let a = document.createElement('div');
                                 let color = obj.type === 'exp' ? '#e8f4f8' : '#fce8e8';
-                                a.innerHTML = '<div style="font-size:0.8em; margin-top:2px; background:'+color+'; padding:3px; border-radius:2px; text-align:center;">' + obj.url + ' <i class="fa fa-check text-success"></i> ' + (obj.type === 'exp' ? 'Expédition' : 'Retour') + '</div>';
+                                a.innerHTML = '<div style="font-size:0.8em; margin-top:2px; background:'+color+'; padding:3px; border-radius:2px; text-align:center;">' + obj.url + ' ('+obj.qty+')<br><span style="color:#666;"><i class="fa fa-calendar"></i> '+obj.date+'</span></div>';
                                 container.appendChild(a);
                             }
                         });
