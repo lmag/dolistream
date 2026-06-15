@@ -3678,7 +3678,7 @@ function loadRentalFlowGrid(project_id) {
                 let fd = new FormData(form);
                 let scenario = { exp: {}, ret: {} };
                 for (let [key, value] of fd.entries()) {
-                    let m = key.match(/grid_(exp|ret)\[(\d+)\]\[([^\]]+)\]\[(\d+)\]\[(pct|date|wh)\]/);
+                    let m = key.match(/grid_(exp|ret)\[(\d+)\]\[([^\]]+)\]\[(\d+)\]\[(pct|fixed_qty|date|wh)\]/);
                     if (m) {
                         let type = m[1], lineId = m[2], month = m[3], idx = m[4], field = m[5];
                         if (!scenario[type][lineId]) scenario[type][lineId] = {};
@@ -3692,7 +3692,7 @@ function loadRentalFlowGrid(project_id) {
                         for (let month in scenario[type][lineId]) {
                             let blocks = scenario[type][lineId][month];
                             for (let idx in blocks) {
-                                if (!blocks[idx].pct || parseInt(blocks[idx].pct) === 0) {
+                                if ((!blocks[idx].pct || parseFloat(blocks[idx].pct) === 0) && (!blocks[idx].fixed_qty || parseFloat(blocks[idx].fixed_qty) === 0)) {
                                     delete blocks[idx];
                                 }
                             }
@@ -3730,9 +3730,17 @@ function loadRentalFlowGrid(project_id) {
                                         addBlock(type, lineId, month, month+'-01', month+'-31');
                                         let newIdx = blockIndexCounter - 1;
                                         let pctInp = document.getElementsByName('grid_'+type+'['+lineId+']['+month+']['+newIdx+'][pct]')[0];
+                                        let fixedInp = document.getElementsByName('grid_'+type+'['+lineId+']['+month+']['+newIdx+'][fixed_qty]')[0];
                                         let dateInp = document.getElementsByName('grid_'+type+'['+lineId+']['+month+']['+newIdx+'][date]')[0];
                                         let whInp = document.getElementsByName('grid_'+type+'['+lineId+']['+month+']['+newIdx+'][wh]')[0];
-                                        if (pctInp) { pctInp.value = bData.pct; updateGridTot(pctInp, lineId, type); }
+                                        
+                                        if (bData.fixed_qty && parseFloat(bData.fixed_qty) > 0 && fixedInp) {
+                                            fixedInp.value = bData.fixed_qty;
+                                            syncQty(fixedInp, 'fixed', lineId, type);
+                                        } else if (bData.pct && parseFloat(bData.pct) > 0 && pctInp) {
+                                            pctInp.value = bData.pct;
+                                            syncQty(pctInp, 'pct', lineId, type);
+                                        }
                                         if (dateInp && bData.date) dateInp.value = bData.date;
                                         if (whInp && bData.wh) whInp.value = bData.wh;
                                     }
