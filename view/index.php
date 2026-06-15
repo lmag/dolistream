@@ -361,7 +361,7 @@ if ($action === 'fetch_project_flow_data') {
                         'qty' => $line->qty,
                         'cmd_id' => $cmd->id,
                         'cmd_ref' => $cmd->ref,
-                        'date_start' => $line->date_start ? date('d/m/Y', $line->date_start) : '',
+                        'date_start' => $line->date_start ? dol_print_date($line->date_start, 'day') : '',
                         'shipped_qty' => $shipped,
                         'returned_qty' => $returned,
                         'existing_exp' => $exp_arr,
