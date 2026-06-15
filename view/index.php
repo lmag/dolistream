@@ -3353,7 +3353,7 @@ function loadRentalFlowGrid(project_id) {
                         
                         // EXPEDITION (1 row)
                         html += '<tr class="oddeven" style="border-top:2px solid #ccc;">';
-                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span><br><br><span style="font-size:0.85em; color:#2e7d32; white-space:nowrap;">Expédié: '+line.shipped_qty+' <br><b>(Reste: '+remainExp+')</b></span><br><br><span style="font-size:0.85em; color:#e65100; white-space:nowrap;">Retourné: '+line.returned_qty+' <br><b>(Reste: '+remainRet+')</b></span></td>';
+                        html += '<td rowspan="2" style="vertical-align:top; background:#fff; padding-top:10px;"><b>'+line.ref+'</b><br><span class="opacitymedium" style="font-size:0.85em;">Cmd: '+line.cmd_ref+' (Qté: '+line.qty+')</span><br><br><span style="font-size:0.85em; color:#2e7d32; white-space:nowrap;">Expédié: '+line.shipped_qty+' <br><b>(Reste: '+remainExp+')</b></span><div id="plan_exp_'+line.id+'" style="font-size:0.85em; color:red; margin-bottom:10px; display:none;">Planifié: 0</div><span style="font-size:0.85em; color:#e65100; white-space:nowrap;">Retourné: '+line.returned_qty+' <br><b>(Reste: '+remainRet+')</b></span><div id="plan_ret_'+line.id+'" style="font-size:0.85em; color:red; display:none;">Planifié: 0</div></td>';
                         html += '<td style="background:#eef7e6; color:#2e7d32; font-weight:bold; text-align:center; vertical-align:middle;">Expédition</td>';
                         html += '<td style="background:#eef7e6; text-align:center; font-size:0.85em; font-weight:bold;">Répartition</td>';
                         months.forEach(m => {
@@ -3478,12 +3478,26 @@ function loadRentalFlowGrid(project_id) {
             }
             
             function updateGridTot(input, lineId, type) {
-                let inputs = document.querySelectorAll('input.grid-input-'+type+'-pct[data-line="'+lineId+'"]');
-                let sum = 0; inputs.forEach(i => sum += parseInt(i.value || 0));
+                let inputsPct = document.querySelectorAll('input.grid-input-'+type+'-pct[data-line="'+lineId+'"]');
+                let sumPct = 0; inputsPct.forEach(i => sumPct += parseFloat(i.value || 0));
+                
+                let inputsFixed = document.querySelectorAll('input.grid-input-'+type+'-fixed[data-line="'+lineId+'"]');
+                let sumFixed = 0; inputsFixed.forEach(i => sumFixed += parseFloat(i.value || 0));
+
                 let totEl = document.getElementById('tot_'+type+'_'+lineId);
                 if (totEl) {
-                    totEl.innerHTML = sum + '%';
-                    if (sum < 100) totEl.style.color = 'orange'; else if (sum > 100) totEl.style.color = 'red'; else totEl.style.color = 'green';
+                    totEl.innerHTML = Math.round(sumPct) + '%';
+                    if (sumPct < 100) totEl.style.color = 'orange'; else if (sumPct > 100) totEl.style.color = 'red'; else totEl.style.color = 'green';
+                }
+                
+                let planEl = document.getElementById('plan_'+type+'_'+lineId);
+                if (planEl) {
+                    if (sumFixed > 0) {
+                        planEl.innerHTML = 'Planifié: ' + Math.round(sumFixed);
+                        planEl.style.display = 'block';
+                    } else {
+                        planEl.style.display = 'none';
+                    }
                 }
             }
 
