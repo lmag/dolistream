@@ -3630,7 +3630,8 @@ function loadRentalFlowGrid(project_id) {
                 let cb = document.getElementById('ds-cb');
                 if (cb) { cb.style.display = 'block'; cb.innerHTML = ''; }
                 
-                fetch(form.action, { method: 'POST', body: fd })
+                let targetUrl = '<?php echo dol_buildpath("/custom/dolistream/ajax/run.php", 1); ?>';
+                fetch(targetUrl, { method: 'POST', body: fd })
                 .then(r => r.json())
                 .then(data => {
                     if (ring) { ring.style.visibility = 'hidden'; circle.style.animationPlayState = 'paused'; }
